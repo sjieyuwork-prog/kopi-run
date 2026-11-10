@@ -9,7 +9,7 @@ test('usernames are 3 to 20 letters, numbers, dots, dashes or underscores', () =
   }
 });
 
-test('invite codes are 4 to 32 characters with no spaces', () => {
-  for (const ok of ['KOPI', 'teh-c-peng!', 'x'.repeat(LIMITS.inviteMax)]) assert.ok(INVITE_CODE_RE.test(ok), ok);
-  for (const bad of ['ABC', 'x'.repeat(LIMITS.inviteMax + 1), 'KOPI RUN', ' KOPI']) assert.ok(!INVITE_CODE_RE.test(bad), bad);
+test('invite codes are 8 to 32 characters with no spaces', () => {
+  for (const ok of ['KOPI-RUN', 'teh-c-peng!', 'x'.repeat(LIMITS.inviteMax)]) assert.ok(INVITE_CODE_RE.test(ok), ok);
+  for (const bad of ['KOPIRUN', 'x'.repeat(LIMITS.inviteMax + 1), 'KOPI RUN', ' KOPI']) assert.ok(!INVITE_CODE_RE.test(bad), bad);
 });

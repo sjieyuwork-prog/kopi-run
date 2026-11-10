@@ -6,11 +6,11 @@ export const LIMITS = {
   historySize: 5, // closed sessions kept; older ones are deleted
   usernameMin: 3,
   usernameMax: 20,
-  passwordMin: 6,
+  passwordMin: 10,
   passwordMax: 128,
   title: 60,
   note: 80,
-  inviteMin: 4,
+  inviteMin: 8, // custom verification codes; generated ones are 8 characters
   inviteMax: 32,
 };
 
