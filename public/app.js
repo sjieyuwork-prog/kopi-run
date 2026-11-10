@@ -459,7 +459,7 @@ async function openDrinkDialog(userId) {
     draft.candidates = users.filter((u) => !ordered.has(u.id));
     if (!draft.candidates.length) return toast('Everyone already has a drink in this session.');
     draft.userId = draft.candidates[0].id;
-    saved = draft.candidates[0].lastOrder;
+    // Other people's saved orders stay private, so the picker starts from a plain drink.
   } else {
     const existing = s.orders.find((o) => o.userId === userId);
     draft.userName = existing?.userName ?? state.me.username;
@@ -540,7 +540,6 @@ $dialog.addEventListener('change', (e) => {
   if (name === 'user') {
     const person = draft.candidates.find((u) => u.id === Number(value));
     draft.userId = person.id;
-    fillDraft(person.lastOrder);
     renderDialog();
     $dialog.querySelector('select').focus();
   } else if (name === 'base') {

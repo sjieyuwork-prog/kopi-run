@@ -3,6 +3,7 @@ import { deleteCookie, getCookie, setCookie } from 'hono/cookie';
 import { INVITE_CODE_RE, LIMITS, SETTING, STATUS, USERNAME_RE } from '../public/limits.js';
 import { drinkName, validateDrink } from '../public/menu.js';
 import { hashPassword, randomCode, randomToken, sha256Hex, verifyPassword } from './crypto.js';
+import { SECURITY_HEADERS } from './headers.js';
 
 const LOGIN_SECONDS = 30 * 24 * 60 * 60;
 const COOKIE = 'kopi_sid';
@@ -128,6 +129,8 @@ async function ensureSetup(env) {
 }
 
 app.use('/api/*', async (c, next) => {
+  // Set first so early refusals and error responses get them too.
+  for (const [name, value] of Object.entries(SECURITY_HEADERS)) c.header(name, value);
   // Browsers send Origin on every write, so a mismatch means another site is acting as the user.
   const origin = c.req.header('Origin');
   if (c.req.method !== 'GET' && origin && origin !== new URL(c.req.url).origin) {
@@ -161,7 +164,8 @@ async function startLogin(c, userId) {
     sameSite: 'Lax',
     path: '/',
     maxAge: LOGIN_SECONDS,
-    // Plain http is only used on the local network, where a Secure cookie would never be sent.
+    // Plain http is only used by `npm run dev` on 127.0.0.1, where a Secure cookie would never be sent.
+    // Everywhere else (deployed, `npm run dev:lan`) the request is https and the cookie is Secure.
     secure: new URL(c.req.url).protocol === 'https:',
   });
 }
@@ -375,7 +379,10 @@ app.put('/api/sessions/:id/orders/:userId', requireUser, loadSession(), async (c
            note = excluded.note, updated_at = excluded.updated_at`
       )
       .bind(session.id, target.id, target.username, JSON.stringify(drink), drinkName(drink), note, Date.now()),
-    db.prepare('UPDATE users SET last_drink = ? WHERE id = ?').bind(JSON.stringify({ drink, note }), target.id),
+    // Only your own order becomes your "same as last time"; the purchaser's picks for others don't.
+    ...(target.id === user.id
+      ? [db.prepare('UPDATE users SET last_drink = ? WHERE id = ?').bind(JSON.stringify({ drink, note }), user.id)]
+      : []),
     bumpVersion(db),
   ]);
   return c.json({ ok: true });
@@ -403,11 +410,22 @@ app.delete('/api/orders/:id', requireUser, async (c) => {
 
 // ---------- accounts ----------
 
+// The admin manages accounts; the open session's purchaser needs names for "Add a drink for someone".
+// Nobody else gets the list, and nobody gets other people's saved orders.
 app.get('/api/users', requireUser, async (c) => {
-  const { results } = await c.env.DB.prepare(
-    'SELECT id, username, is_admin, last_drink FROM users ORDER BY username COLLATE NOCASE'
-  ).all();
-  return c.json({ users: results.map(userJson), max: LIMITS.maxUsers });
+  const db = c.env.DB;
+  const user = c.get('user');
+  if (!user.isAdmin) {
+    const open = await db.prepare('SELECT 1 FROM order_sessions WHERE status = ? AND purchaser_id = ?')
+      .bind(STATUS.open, user.id)
+      .first();
+    if (!open) return fail(c, 403, 'Only the purchaser of the open session can see the list of people.');
+  }
+  const { results } = await db.prepare('SELECT id, username, is_admin FROM users ORDER BY username COLLATE NOCASE').all();
+  const users = results.map((u) =>
+    user.isAdmin ? { id: u.id, username: u.username, isAdmin: u.is_admin === 1 } : { id: u.id, username: u.username }
+  );
+  return c.json({ users, max: LIMITS.maxUsers });
 });
 
 app.get('/api/admin/invite', requireUser, requireAdmin, async (c) => {
