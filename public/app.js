@@ -180,7 +180,7 @@ function authView() {
           <input name="username" autocomplete="username" autocapitalize="none" spellcheck="false" maxlength="20" required>
         </label>
         <label>Password
-          <input name="password" type="password" autocomplete="${signup ? 'new-password' : 'current-password'}" ${signup ? 'minlength="6"' : ''} required>
+          <input name="password" type="password" autocomplete="${signup ? 'new-password' : 'current-password'}" ${signup ? 'minlength="10"' : ''} required>
         </label>
         ${
           signup
@@ -393,7 +393,7 @@ function accountView() {
           <input name="currentPassword" type="password" autocomplete="current-password" required>
         </label>
         <label>New password
-          <input name="newPassword" type="password" autocomplete="new-password" minlength="6" required>
+          <input name="newPassword" type="password" autocomplete="new-password" minlength="10" required>
         </label>
         <p class="error" role="alert" hidden></p>
         <button class="primary">Change password</button>
@@ -427,7 +427,7 @@ function adminView() {
       </div>
       <form data-form="code" class="stack">
         <label>Or set your own
-          <input name="code" minlength="4" maxlength="32" autocomplete="off" spellcheck="false" required>
+          <input name="code" minlength="8" maxlength="32" autocomplete="off" spellcheck="false" required>
         </label>
         <p class="error" role="alert" hidden></p>
         <button>Save code</button>
@@ -630,7 +630,7 @@ const actions = {
     render();
   },
   async 'reset-password'(el) {
-    const password = prompt(`New password for ${el.dataset.name} (at least 6 characters):`);
+    const password = prompt(`New password for ${el.dataset.name} (at least 10 characters):`);
     if (!password) return;
     await api('POST', `/admin/users/${el.dataset.user}/password`, { password });
     toast(`Password reset. Tell ${el.dataset.name} the new one.`);

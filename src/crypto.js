@@ -30,6 +30,10 @@ export async function verifyPassword(password, stored) {
   return diff === 0;
 }
 
+// Checked against when a username does not exist, so that path costs the same PBKDF2 work as a real one
+// and response times do not reveal which usernames exist. No password matches it.
+export const DUMMY_HASH = `pbkdf2$${ITERATIONS}$${toBase64(new Uint8Array(16))}$${toBase64(new Uint8Array(32))}`;
+
 export const randomToken = () => toHex(crypto.getRandomValues(new Uint8Array(32)));
 
 export async function sha256Hex(text) {

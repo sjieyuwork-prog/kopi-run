@@ -1,17 +1,19 @@
 import { Hono } from 'hono';
 import { deleteCookie, getCookie, setCookie } from 'hono/cookie';
 import { drinkName, validateDrink } from '../public/menu.js';
-import { hashPassword, randomCode, randomToken, sha256Hex, verifyPassword } from './crypto.js';
+import { DUMMY_HASH, hashPassword, randomCode, randomToken, sha256Hex, verifyPassword } from './crypto.js';
+import { clearAttempts, clientIp, isLimited, pruneAttempts, recordAttempt } from './ratelimit.js';
 
 const MAX_USERS = 50;
 const HISTORY_SIZE = 5; // closed sessions kept; older ones are deleted
 const LOGIN_SECONDS = 30 * 24 * 60 * 60;
 const COOKIE = 'kopi_sid';
 const USERNAME_RE = /^[A-Za-z0-9._-]{3,20}$/;
-const MIN_PASSWORD = 6;
+const MIN_PASSWORD = 10;
 const MAX_PASSWORD = 128;
 const MAX_TITLE = 60;
 const MAX_NOTE = 80;
+const INVITE_RE = /^\S{8,32}$/; // custom verification codes; generated ones are 8 characters
 
 const app = new Hono();
 
@@ -20,6 +22,7 @@ const app = new Hono();
 class SetupError extends Error {}
 
 const fail = (c, status, error) => c.json({ error }, status);
+const tooMany = (c) => fail(c, 429, 'Too many attempts. Wait 15 minutes, then try again.');
 const cleanText = (value, max) => String(value ?? '').replace(/\s+/g, ' ').trim().slice(0, max);
 const isUniqueViolation = (err) => String(err?.message).includes('UNIQUE constraint failed');
 
@@ -135,6 +138,7 @@ async function startLogin(c, userId) {
   const token = randomToken();
   await db.batch([
     db.prepare('DELETE FROM auth_tokens WHERE expires_at <= ?').bind(Date.now()),
+    pruneAttempts(db),
     db
       .prepare('INSERT INTO auth_tokens (token_hash, user_id, expires_at) VALUES (?, ?, ?)')
       .bind(await sha256Hex(token), userId, Date.now() + LOGIN_SECONDS * 1000),
@@ -180,6 +184,11 @@ app.post('/api/signup', async (c) => {
   const problem = passwordProblem(body.password);
   if (problem) return fail(c, 400, problem);
 
+  // Every attempt counts, so the code cannot be guessed and the account slots cannot be filled quickly.
+  const ip = clientIp(c);
+  if (await isLimited(db, 'signup-ip', ip)) return tooMany(c);
+  await recordAttempt(db, 'signup-ip', ip).run();
+
   // Check the code before anything else, so strangers cannot probe which usernames exist.
   const code = String(body.code ?? '').trim().toUpperCase();
   if (code !== (await getSetting(db, 'invite_code')).toUpperCase()) {
@@ -211,12 +220,20 @@ app.post('/api/signup', async (c) => {
 });
 
 app.post('/api/login', async (c) => {
+  const db = c.env.DB;
   const body = await readJson(c);
   const key = String(body.username ?? '').trim().toLowerCase();
-  const row = await c.env.DB.prepare('SELECT id, password_hash FROM users WHERE username_key = ?').bind(key).first();
-  if (!row || !(await verifyPassword(String(body.password ?? ''), row.password_hash))) {
+  const ip = clientIp(c);
+  if ((await isLimited(db, 'login-ip', ip)) || (await isLimited(db, 'login-user', key))) return tooMany(c);
+
+  const row = await db.prepare('SELECT id, password_hash FROM users WHERE username_key = ?').bind(key).first();
+  // A missing user is checked against a dummy hash, so both paths take the same time.
+  const ok = await verifyPassword(String(body.password ?? ''), row?.password_hash ?? DUMMY_HASH);
+  if (!row || !ok) {
+    await db.batch([recordAttempt(db, 'login-ip', ip), recordAttempt(db, 'login-user', key)]);
     return fail(c, 401, 'Wrong username or password.');
   }
+  await clearAttempts(db, 'login-user', key).run();
   await startLogin(c, row.id);
   return c.json({ ok: true });
 });
@@ -416,7 +433,7 @@ app.get('/api/admin/invite', requireUser, requireAdmin, async (c) => {
 app.put('/api/admin/invite', requireUser, requireAdmin, async (c) => {
   const body = await readJson(c);
   const code = String(body.code ?? '').trim() || randomCode();
-  if (!/^\S{4,32}$/.test(code)) return fail(c, 400, 'The code must be 4 to 32 characters with no spaces.');
+  if (!INVITE_RE.test(code)) return fail(c, 400, 'The code must be 8 to 32 characters with no spaces.');
   await c.env.DB.prepare("UPDATE settings SET value = ? WHERE key = 'invite_code'").bind(code).run();
   return c.json({ code });
 });
