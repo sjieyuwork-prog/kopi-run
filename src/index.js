@@ -37,9 +37,11 @@ async function readJson(c) {
 }
 
 function passwordProblem(password) {
-  const ok =
-    typeof password === 'string' && password.length >= LIMITS.passwordMin && password.length <= LIMITS.passwordMax;
-  return ok ? null : `Password must be at least ${LIMITS.passwordMin} characters.`;
+  if (typeof password !== 'string' || password.length < LIMITS.passwordMin) {
+    return `Password must be at least ${LIMITS.passwordMin} characters.`;
+  }
+  if (password.length > LIMITS.passwordMax) return `Password must be at most ${LIMITS.passwordMax} characters.`;
+  return null;
 }
 
 // Runs fn and returns its response, or a 409 with `message` if it hit a unique constraint.
