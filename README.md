@@ -23,10 +23,12 @@ To start over with an empty database, stop the app and delete `.wrangler/state`.
 
 ## The rules
 
-- **Accounts:** username and password (at least 10 characters), at most 50. Signing up needs the verification code, which only the admin can see, change or regenerate; a custom code needs at least 8 characters. The admin can also reset passwords and delete accounts.
+- **Accounts:** username and password (at least 10 characters), at most 50. Signing up needs the verification code, which only the admin can see, change or regenerate; a custom code needs at least 8 characters. The admin can also reset passwords and delete accounts. Anyone except the admin can delete their own account from the **Account** tab.
 - **Guessing limits:** in any 15 minutes, an account allows 10 failed logins, one IP address allows 20 failed logins and 10 sign-up attempts. After that the app answers "Too many attempts" until the 15 minutes are up. A successful login resets that account's count.
-- **Sessions:** anyone can start one and becomes its purchaser. Only one session is open at a time. The purchaser (or the admin) closes, reopens or deletes it. The last 5 closed sessions are kept; older ones are deleted.
-- **Drinks:** one per person per session, with an optional note. You can change or remove your own while the session is open. The purchaser can add, change or remove a drink for anyone. The form is pre-filled with your previous drink.
+- **Sessions:** anyone can start one and becomes its purchaser. Only one session is open at a time. The purchaser (or the admin) closes, reopens or deletes it. The last 5 closed sessions are kept; older ones are deleted, and so is any closed session older than 30 days.
+- **Drinks:** one per person per session, with an optional note. You can change or remove your own while the session is open. The purchaser can add, change or remove a drink for anyone. The form is pre-filled with your previous drink, which you can clear from the **Account** tab.
+- **Personal data:** deleting an account, by its owner or the admin, removes that person's drinks from every session, including past ones, and shows sessions they bought for as bought by "Deleted user".
+- **Cleanup:** a Cron Trigger runs daily at 3am Singapore time. It removes expired logins and old login-attempt counts, closes an open session nobody has touched for 24 hours, and deletes old history. Locally, trigger it with `curl "http://localhost:8787/cdn-cgi/handler/scheduled"` while `wrangler dev --test-scheduled` runs.
 - **Updates:** every open page checks for changes every 5 seconds.
 
 ## The menu
@@ -66,13 +68,14 @@ The admin account is created once. Changing the secrets later does not change it
 npm test
 ```
 
-This covers the menu naming and validation rules, the login and sign-up limits, and order saves that race with a close, a delete or someone else's edit. The login and order tests run the Worker against Node's built-in SQLite (`node:sqlite`, Node 22.13 or later) in place of D1.
+This covers the menu naming and validation rules, the login and sign-up limits, order saves that race with a close, a delete or someone else's edit, and the account deletion and cleanup rules. Those server tests run the Worker against Node's built-in SQLite (`node:sqlite`, Node 22.13 or later) in place of D1.
 
 ## Layout
 
 | Path | What it holds |
 |---|---|
 | `src/index.js` | the API: login, sessions, orders, admin |
+| `src/cleanup.js` | account deletion and the daily cleanup |
 | `src/crypto.js` | password hashing and random tokens |
 | `public/` | the frontend and the shared menu |
 | `migrations/` | the database schema |

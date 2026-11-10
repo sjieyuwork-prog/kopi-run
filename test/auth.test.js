@@ -3,7 +3,10 @@ import assert from 'node:assert/strict';
 import { readdirSync, readFileSync } from 'node:fs';
 import { DatabaseSync } from 'node:sqlite';
 import test from 'node:test';
-import app from '../src/index.js';
+import worker from '../src/index.js';
+
+// The Worker exports { fetch, scheduled }; this gives the tests Hono's app.request() shape.
+const app = { request: (path, init, env) => worker.fetch(new Request(new URL(path, 'http://localhost'), init), env) };
 
 // Just enough of the D1 API for the Worker: prepare/bind/first/all/run and batch.
 function fakeD1() {

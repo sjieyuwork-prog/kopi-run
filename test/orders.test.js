@@ -1,17 +1,22 @@
 // Order writes racing with closes, deletes and other people's edits (issue #4).
 // Runs the real Worker against an in-memory SQLite database that stands in for D1.
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
+import { readdirSync, readFileSync } from 'node:fs';
 import { DatabaseSync } from 'node:sqlite';
 import test from 'node:test';
-import app from '../src/index.js';
 import { sha256Hex } from '../src/crypto.js';
+import worker from '../src/index.js';
+
+// The Worker exports { fetch, scheduled }; this gives the tests Hono's app.request() shape.
+const app = { request: (path, init, env) => worker.fetch(new Request(new URL(path, 'http://localhost'), init), env) };
 
 // Just enough of the D1 API for the Worker: prepare/bind/first/all/run and batch.
 function fakeD1() {
   const sql = new DatabaseSync(':memory:');
   sql.exec('PRAGMA foreign_keys = ON');
-  sql.exec(readFileSync(new URL('../migrations/0001_init.sql', import.meta.url), 'utf8'));
+  for (const file of readdirSync(new URL('../migrations/', import.meta.url)).sort()) {
+    sql.exec(readFileSync(new URL(`../migrations/${file}`, import.meta.url), 'utf8'));
+  }
   const db = {
     sql,
     prepare(query) {
