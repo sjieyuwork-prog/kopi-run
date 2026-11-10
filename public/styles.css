@@ -436,3 +436,55 @@ legend {
   opacity: 1;
   transform: translate(-50%, 0);
 }
+
+/* Errors stay on screen until dismissed. */
+#alert {
+  position: fixed;
+  bottom: 20px;
+  left: 50%;
+  transform: translateX(-50%);
+  width: max-content;
+  max-width: calc(100% - 32px);
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 10px 10px 18px;
+  border-radius: 14px;
+  background: var(--danger);
+  color: var(--bg);
+  font-weight: 600;
+}
+
+#alert[hidden],
+#offline[hidden] {
+  display: none;
+}
+
+#alert button {
+  flex: none;
+  padding: 4px 10px;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+}
+
+/* ---------- loading and offline ---------- */
+
+.loading {
+  margin-top: 24px;
+  text-align: center;
+}
+
+#offline {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  margin: 0;
+  padding: 8px 16px;
+  text-align: center;
+  background: var(--danger);
+  color: var(--bg);
+  font-weight: 600;
+}
