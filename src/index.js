@@ -144,7 +144,8 @@ async function startLogin(c, userId) {
     sameSite: 'Lax',
     path: '/',
     maxAge: LOGIN_SECONDS,
-    // Plain http is only used on the local network, where a Secure cookie would never be sent.
+    // Plain http is only used by `npm run dev` on 127.0.0.1, where a Secure cookie would never be sent.
+    // Everywhere else (deployed, `npm run dev:lan`) the request is https and the cookie is Secure.
     secure: new URL(c.req.url).protocol === 'https:',
   });
 }

@@ -5,7 +5,8 @@
   "type": "module",
   "scripts": {
     "migrate": "wrangler d1 migrations apply kopi-run --local",
-    "dev": "npm run migrate && wrangler dev --ip 0.0.0.0",
+    "dev": "npm run migrate && wrangler dev --ip 127.0.0.1",
+    "dev:lan": "npm run migrate && wrangler dev --ip 0.0.0.0 --local-protocol https",
     "migrate:remote": "wrangler d1 migrations apply kopi-run --remote",
     "deploy": "npm run migrate:remote && wrangler deploy",
     "test": "node --test"
