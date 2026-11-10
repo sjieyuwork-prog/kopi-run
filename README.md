@@ -66,7 +66,7 @@ The admin account is created once. Changing the secrets later does not change it
 npm test
 ```
 
-This covers the menu naming and validation rules, and the login and sign-up limits (run against an in-memory SQLite database; needs Node 22.13 or later).
+This covers the menu naming and validation rules, the login and sign-up limits, and order saves that race with a close, a delete or someone else's edit. The login and order tests run the Worker against Node's built-in SQLite (`node:sqlite`, Node 22.13 or later) in place of D1.
 
 ## Layout
 
