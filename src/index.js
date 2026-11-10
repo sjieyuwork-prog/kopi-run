@@ -20,7 +20,11 @@ const app = new Hono();
 class SetupError extends Error {}
 
 const fail = (c, status, error) => c.json({ error }, status);
-const cleanText = (value, max) => String(value ?? '').replace(/\s+/g, ' ').trim().slice(0, max);
+const cleanText = (value, max) =>
+  String(value ?? '')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .slice(0, max);
 const isUniqueViolation = (err) => String(err?.message).includes('UNIQUE constraint failed');
 
 // Ids start at 1, so anything unparseable becomes 0 and simply finds nothing.
@@ -68,7 +72,7 @@ const sessionJson = (row) => ({
 async function sessionWithOrders(db, row) {
   const { results } = await db
     .prepare(
-      'SELECT id, user_id, user_name, drink, drink_name, note FROM orders WHERE session_id = ? ORDER BY user_name COLLATE NOCASE'
+      'SELECT id, user_id, user_name, drink, drink_name, note FROM orders WHERE session_id = ? ORDER BY user_name COLLATE NOCASE',
     )
     .bind(row.id)
     .all();
@@ -101,7 +105,7 @@ async function ensureSetup(env) {
     }
     await db
       .prepare(
-        'INSERT OR IGNORE INTO users (username, username_key, password_hash, is_admin, created_at) VALUES (?, ?, ?, 1, ?)'
+        'INSERT OR IGNORE INTO users (username, username_key, password_hash, is_admin, created_at) VALUES (?, ?, ?, 1, ?)',
       )
       .bind(username, username.toLowerCase(), await hashPassword(password), Date.now())
       .run();
@@ -110,6 +114,7 @@ async function ensureSetup(env) {
   ready = true;
 }
 
+// eslint-disable-next-line consistent-return -- Hono middleware returns a Response to stop early, or nothing after next().
 app.use('/api/*', async (c, next) => {
   // Browsers send Origin on every write, so a mismatch means another site is acting as the user.
   const origin = c.req.header('Origin');
@@ -149,6 +154,7 @@ async function startLogin(c, userId) {
   });
 }
 
+// eslint-disable-next-line consistent-return -- Hono middleware returns a Response to stop early, or nothing after next().
 const requireUser = async (c, next) => {
   const token = getCookie(c, COOKIE);
   const row =
@@ -156,7 +162,7 @@ const requireUser = async (c, next) => {
     (await c.env.DB.prepare(
       `SELECT u.id, u.username, u.is_admin, u.last_drink
          FROM auth_tokens t JOIN users u ON u.id = t.user_id
-        WHERE t.token_hash = ? AND t.expires_at > ?`
+        WHERE t.token_hash = ? AND t.expires_at > ?`,
     )
       .bind(await sha256Hex(token), Date.now())
       .first());
@@ -165,6 +171,7 @@ const requireUser = async (c, next) => {
   await next();
 };
 
+// eslint-disable-next-line consistent-return -- Hono middleware returns a Response to stop early, or nothing after next().
 const requireAdmin = async (c, next) => {
   if (!c.get('user').isAdmin) return fail(c, 403, 'Only the admin can do that.');
   await next();
@@ -181,7 +188,9 @@ app.post('/api/signup', async (c) => {
   if (problem) return fail(c, 400, problem);
 
   // Check the code before anything else, so strangers cannot probe which usernames exist.
-  const code = String(body.code ?? '').trim().toUpperCase();
+  const code = String(body.code ?? '')
+    .trim()
+    .toUpperCase();
   if (code !== (await getSetting(db, 'invite_code')).toUpperCase()) {
     return fail(c, 403, 'That verification code is not right. Ask the admin for the current one.');
   }
@@ -195,7 +204,7 @@ app.post('/api/signup', async (c) => {
     created = await db
       .prepare(
         `INSERT INTO users (username, username_key, password_hash, created_at)
-         SELECT ?, ?, ?, ? WHERE (SELECT COUNT(*) FROM users) < ?`
+         SELECT ?, ?, ?, ? WHERE (SELECT COUNT(*) FROM users) < ?`,
       )
       .bind(username, key, await hashPassword(body.password), Date.now(), MAX_USERS)
       .run();
@@ -212,7 +221,9 @@ app.post('/api/signup', async (c) => {
 
 app.post('/api/login', async (c) => {
   const body = await readJson(c);
-  const key = String(body.username ?? '').trim().toLowerCase();
+  const key = String(body.username ?? '')
+    .trim()
+    .toLowerCase();
   const row = await c.env.DB.prepare('SELECT id, password_hash FROM users WHERE username_key = ?').bind(key).first();
   if (!row || !(await verifyPassword(String(body.password ?? ''), row.password_hash))) {
     return fail(c, 401, 'Wrong username or password.');
@@ -224,7 +235,9 @@ app.post('/api/login', async (c) => {
 app.post('/api/logout', async (c) => {
   const token = getCookie(c, COOKIE);
   if (token) {
-    await c.env.DB.prepare('DELETE FROM auth_tokens WHERE token_hash = ?').bind(await sha256Hex(token)).run();
+    await c.env.DB.prepare('DELETE FROM auth_tokens WHERE token_hash = ?')
+      .bind(await sha256Hex(token))
+      .run();
   }
   deleteCookie(c, COOKIE, { path: '/' });
   return c.json({ ok: true });
@@ -308,7 +321,7 @@ app.post('/api/sessions/:id/close', requireUser, async (c) => {
       .prepare(
         `DELETE FROM order_sessions
           WHERE status = 'closed'
-            AND id NOT IN (SELECT id FROM order_sessions WHERE status = 'closed' ORDER BY closed_at DESC, id DESC LIMIT ?)`
+            AND id NOT IN (SELECT id FROM order_sessions WHERE status = 'closed' ORDER BY closed_at DESC, id DESC LIMIT ?)`,
       )
       .bind(HISTORY_SIZE),
     bumpVersion(db),
@@ -355,7 +368,9 @@ app.put('/api/sessions/:id/orders/:userId', requireUser, async (c) => {
     return fail(c, 403, 'Only the purchaser can order for someone else.');
   }
   const target =
-    targetId === user.id ? user : await db.prepare('SELECT id, username FROM users WHERE id = ?').bind(targetId).first();
+    targetId === user.id
+      ? user
+      : await db.prepare('SELECT id, username FROM users WHERE id = ?').bind(targetId).first();
   if (!target) return fail(c, 404, 'That account no longer exists.');
 
   const body = await readJson(c);
@@ -370,7 +385,7 @@ app.put('/api/sessions/:id/orders/:userId', requireUser, async (c) => {
          VALUES (?, ?, ?, ?, ?, ?, ?)
          ON CONFLICT (session_id, user_id) DO UPDATE SET
            user_name = excluded.user_name, drink = excluded.drink, drink_name = excluded.drink_name,
-           note = excluded.note, updated_at = excluded.updated_at`
+           note = excluded.note, updated_at = excluded.updated_at`,
       )
       .bind(session.id, target.id, target.username, JSON.stringify(drink), drinkName(drink), note, Date.now()),
     db.prepare('UPDATE users SET last_drink = ? WHERE id = ?').bind(JSON.stringify({ drink, note }), target.id),
@@ -386,7 +401,7 @@ app.delete('/api/orders/:id', requireUser, async (c) => {
     .prepare(
       `SELECT o.id, o.user_id, s.status, s.purchaser_id
          FROM orders o JOIN order_sessions s ON s.id = o.session_id
-        WHERE o.id = ?`
+        WHERE o.id = ?`,
     )
     .bind(idParam(c, 'id'))
     .first();
@@ -403,7 +418,7 @@ app.delete('/api/orders/:id', requireUser, async (c) => {
 
 app.get('/api/users', requireUser, async (c) => {
   const { results } = await c.env.DB.prepare(
-    'SELECT id, username, is_admin, last_drink FROM users ORDER BY username COLLATE NOCASE'
+    'SELECT id, username, is_admin, last_drink FROM users ORDER BY username COLLATE NOCASE',
   ).all();
   return c.json({ users: results.map(userJson), max: MAX_USERS });
 });
@@ -446,7 +461,7 @@ app.delete('/api/admin/users/:id', requireUser, requireAdmin, async (c) => {
   await db.batch([
     db
       .prepare(
-        "DELETE FROM orders WHERE user_id = ? AND session_id IN (SELECT id FROM order_sessions WHERE status = 'open')"
+        "DELETE FROM orders WHERE user_id = ? AND session_id IN (SELECT id FROM order_sessions WHERE status = 'open')",
       )
       .bind(id),
     db.prepare('DELETE FROM users WHERE id = ?').bind(id),

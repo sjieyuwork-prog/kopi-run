@@ -30,14 +30,14 @@ To start over with an empty database, stop the app and delete `.wrangler/state`.
 
 The menu lives in [public/menu.js](public/menu.js). The browser draws the order form from it and the Worker validates orders against it, so that one file is the only place to edit.
 
-| Word | Meaning |
-|---|---|
-| Kopi / Teh / Yuan Yang | coffee / tea / coffee and tea, with condensed milk |
-| C | evaporated milk instead |
-| O | no milk |
-| Siu Dai / Ga Dai / Kosong | less sugar / more sugar / no sugar |
-| Gao / Po / Di Lo | stronger / weaker / extra strong |
-| Peng | iced |
+| Word                      | Meaning                                            |
+| ------------------------- | -------------------------------------------------- |
+| Kopi / Teh / Yuan Yang    | coffee / tea / coffee and tea, with condensed milk |
+| C                         | evaporated milk instead                            |
+| O                         | no milk                                            |
+| Siu Dai / Ga Dai / Kosong | less sugar / more sugar / no sugar                 |
+| Gao / Po / Di Lo          | stronger / weaker / extra strong                   |
+| Peng                      | iced                                               |
 
 Names are built as drink, milk, sugar, strength, temperature: "Kopi O Kosong Gao Peng". Milo, Horlicks, Teh Halia and Diao Yu offer only the options that fit them.
 
@@ -67,9 +67,9 @@ This covers the menu naming and validation rules.
 
 ## Layout
 
-| Path | What it holds |
-|---|---|
-| `src/index.js` | the API: login, sessions, orders, admin |
-| `src/crypto.js` | password hashing and random tokens |
-| `public/` | the frontend and the shared menu |
-| `migrations/` | the database schema |
+| Path            | What it holds                           |
+| --------------- | --------------------------------------- |
+| `src/index.js`  | the API: login, sessions, orders, admin |
+| `src/crypto.js` | password hashing and random tokens      |
+| `public/`       | the frontend and the shared menu        |
+| `migrations/`   | the database schema                     |

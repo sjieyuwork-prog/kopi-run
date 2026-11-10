@@ -8,12 +8,18 @@
     "dev": "npm run migrate && wrangler dev --ip 0.0.0.0",
     "migrate:remote": "wrangler d1 migrations apply kopi-run --remote",
     "deploy": "npm run migrate:remote && wrangler deploy",
-    "test": "node --test"
+    "test": "node --test",
+    "lint": "eslint . && prettier --check .",
+    "format": "prettier --write ."
   },
   "dependencies": {
     "hono": "^4.13.17"
   },
   "devDependencies": {
+    "@eslint/js": "^10.0.1",
+    "eslint": "^10.14.0",
+    "globals": "^17.14.0",
+    "prettier": "^3.9.10",
     "wrangler": "^4.159.0"
   }
 }

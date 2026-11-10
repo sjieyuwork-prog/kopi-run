@@ -27,7 +27,13 @@ const ESCAPES = { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&
 const esc = (text) => String(text ?? '').replace(/[&<>"']/g, (ch) => ESCAPES[ch]);
 
 const fmtTime = (ms) =>
-  new Date(ms).toLocaleString([], { weekday: 'short', day: 'numeric', month: 'short', hour: 'numeric', minute: '2-digit' });
+  new Date(ms).toLocaleString([], {
+    weekday: 'short',
+    day: 'numeric',
+    month: 'short',
+    hour: 'numeric',
+    minute: '2-digit',
+  });
 
 const plural = (n, word) => `${n} ${word}${n === 1 ? '' : 's'}`;
 const sessionTitle = (s) => s.title || 'Drinks run';
@@ -65,7 +71,10 @@ function toast(message) {
 
 function showError(form, message) {
   const el = form.querySelector('.error');
-  if (!el) return toast(message);
+  if (!el) {
+    toast(message);
+    return;
+  }
   el.textContent = message;
   el.hidden = false;
 }
@@ -80,6 +89,7 @@ async function copy(text) {
     area.style.cssText = 'position:fixed;opacity:0';
     document.body.append(area);
     area.select();
+    // execCommand is deprecated, but it is the only copy that works without https, so it stays on purpose.
     document.execCommand('copy');
     area.remove();
   }
@@ -212,7 +222,7 @@ function topBar() {
       ${tabs
         .map(
           ([view, label]) =>
-            `<button data-action="go" data-view="${view}" class="${state.view === view ? 'active' : ''}">${label}</button>`
+            `<button data-action="go" data-view="${view}" class="${state.view === view ? 'active' : ''}">${label}</button>`,
         )
         .join('')}
     </nav>`;
@@ -294,7 +304,7 @@ function summaryCard(s) {
           ${g.note ? `<span class="note">${esc(g.note)}</span>` : ''}
           <small>${esc(g.names.join(', '))}</small>
         </div>
-      </li>`
+      </li>`,
   );
   return `
     <section class="card">
@@ -369,7 +379,7 @@ function historyView() {
           <strong>${esc(sessionTitle(h))}</strong>
           <small>${fmtTime(h.closedAt)} · ${esc(h.purchaserName)} bought</small>
         </button>
-      </li>`
+      </li>`,
   );
   return `
     <section class="card">
@@ -414,7 +424,7 @@ function adminView() {
                 <button class="danger" data-action="delete-user" data-user="${u.id}" data-name="${esc(u.username)}">Delete</button>
               </div>`
         }
-      </li>`
+      </li>`,
   );
   return `
     <section class="card">
@@ -456,7 +466,10 @@ async function openDrinkDialog(userId) {
     const { users } = await api('GET', '/users');
     const ordered = new Set(s.orders.map((o) => o.userId));
     draft.candidates = users.filter((u) => !ordered.has(u.id));
-    if (!draft.candidates.length) return toast('Everyone already has a drink in this session.');
+    if (!draft.candidates.length) {
+      toast('Everyone already has a drink in this session.');
+      return;
+    }
     draft.userId = draft.candidates[0].id;
     saved = draft.candidates[0].lastOrder;
   } else {
@@ -480,7 +493,7 @@ function renderDialog() {
   if (draft.candidates) title = 'Add a drink for someone';
   else if (draft.userId === state.me.id) title = 'Your drink';
   const people = (draft.candidates ?? []).map(
-    (u) => `<option value="${u.id}" ${u.id === draft.userId ? 'selected' : ''}>${esc(u.username)}</option>`
+    (u) => `<option value="${u.id}" ${u.id === draft.userId ? 'selected' : ''}>${esc(u.username)}</option>`,
   );
   $dialog.innerHTML = `
     <form class="stack">
@@ -524,7 +537,7 @@ function renderOptions() {
               .map((o) => chip(group, o.id, o.label, o.hint, draft.drink[group] === o.id))
               .join('')}
           </div>
-        </fieldset>`
+        </fieldset>`,
     )
     .join('');
   updatePreview();
