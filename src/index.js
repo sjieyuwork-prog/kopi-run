@@ -373,7 +373,10 @@ app.put('/api/sessions/:id/orders/:userId', requireUser, async (c) => {
            note = excluded.note, updated_at = excluded.updated_at`
       )
       .bind(session.id, target.id, target.username, JSON.stringify(drink), drinkName(drink), note, Date.now()),
-    db.prepare('UPDATE users SET last_drink = ? WHERE id = ?').bind(JSON.stringify({ drink, note }), target.id),
+    // Only your own order becomes your "same as last time"; the purchaser's picks for others don't.
+    ...(target.id === user.id
+      ? [db.prepare('UPDATE users SET last_drink = ? WHERE id = ?').bind(JSON.stringify({ drink, note }), user.id)]
+      : []),
     bumpVersion(db),
   ]);
   return c.json({ ok: true });
@@ -401,11 +404,22 @@ app.delete('/api/orders/:id', requireUser, async (c) => {
 
 // ---------- accounts ----------
 
+// The admin manages accounts; the open session's purchaser needs names for "Add a drink for someone".
+// Nobody else gets the list, and nobody gets other people's saved orders.
 app.get('/api/users', requireUser, async (c) => {
-  const { results } = await c.env.DB.prepare(
-    'SELECT id, username, is_admin, last_drink FROM users ORDER BY username COLLATE NOCASE'
-  ).all();
-  return c.json({ users: results.map(userJson), max: MAX_USERS });
+  const db = c.env.DB;
+  const user = c.get('user');
+  if (!user.isAdmin) {
+    const open = await db.prepare("SELECT 1 FROM order_sessions WHERE status = 'open' AND purchaser_id = ?")
+      .bind(user.id)
+      .first();
+    if (!open) return fail(c, 403, 'Only the purchaser of the open session can see the list of people.');
+  }
+  const { results } = await db.prepare('SELECT id, username, is_admin FROM users ORDER BY username COLLATE NOCASE').all();
+  const users = results.map((u) =>
+    user.isAdmin ? { id: u.id, username: u.username, isAdmin: u.is_admin === 1 } : { id: u.id, username: u.username }
+  );
+  return c.json({ users, max: MAX_USERS });
 });
 
 app.get('/api/admin/invite', requireUser, requireAdmin, async (c) => {
