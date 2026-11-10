@@ -1,17 +1,11 @@
 import { Hono } from 'hono';
 import { deleteCookie, getCookie, setCookie } from 'hono/cookie';
+import { INVITE_CODE_RE, LIMITS, SETTING, STATUS, USERNAME_RE } from '../public/limits.js';
 import { drinkName, validateDrink } from '../public/menu.js';
 import { hashPassword, randomCode, randomToken, sha256Hex, verifyPassword } from './crypto.js';
 
-const MAX_USERS = 50;
-const HISTORY_SIZE = 5; // closed sessions kept; older ones are deleted
 const LOGIN_SECONDS = 30 * 24 * 60 * 60;
 const COOKIE = 'kopi_sid';
-const USERNAME_RE = /^[A-Za-z0-9._-]{3,20}$/;
-const MIN_PASSWORD = 6;
-const MAX_PASSWORD = 128;
-const MAX_TITLE = 60;
-const MAX_NOTE = 80;
 
 const app = new Hono();
 
@@ -35,12 +29,23 @@ async function readJson(c) {
 }
 
 function passwordProblem(password) {
-  const ok = typeof password === 'string' && password.length >= MIN_PASSWORD && password.length <= MAX_PASSWORD;
-  return ok ? null : `Password must be at least ${MIN_PASSWORD} characters.`;
+  const ok =
+    typeof password === 'string' && password.length >= LIMITS.passwordMin && password.length <= LIMITS.passwordMax;
+  return ok ? null : `Password must be at least ${LIMITS.passwordMin} characters.`;
+}
+
+// Runs fn and returns its response, or a 409 with `message` if it hit a unique constraint.
+async function withConflict(c, message, fn) {
+  try {
+    return await fn();
+  } catch (err) {
+    if (isUniqueViolation(err)) return fail(c, 409, message);
+    throw err;
+  }
 }
 
 const getSetting = (db, key) => db.prepare('SELECT value FROM settings WHERE key = ?').bind(key).first('value');
-const bumpVersion = (db) => db.prepare("UPDATE settings SET value = value + 1 WHERE key = 'version'");
+const bumpVersion = (db) => db.prepare('UPDATE settings SET value = value + 1 WHERE key = ?').bind(SETTING.version);
 
 function userJson(row) {
   // A saved order can outlive a menu change; only offer it back if it is still on the menu.
@@ -86,6 +91,15 @@ async function sessionWithOrders(db, row) {
 const findSession = (db, id) => db.prepare('SELECT * FROM order_sessions WHERE id = ?').bind(id).first();
 const canManage = (user, session) => user.isAdmin || session.purchaser_id === user.id;
 
+// Puts the :id session in c.get('session'). With a verb, only the purchaser or the admin may go on.
+const loadSession = (verb) => async (c, next) => {
+  const session = await findSession(c.env.DB, idParam(c, 'id'));
+  if (!session) return fail(c, 404, 'That session no longer exists.');
+  if (verb && !canManage(c.get('user'), session)) return fail(c, 403, `Only the purchaser can ${verb} this session.`);
+  c.set('session', session);
+  await next();
+};
+
 // ---------- setup and auth ----------
 
 // Runs once per Worker instance: creates the admin account and the first verification code.
@@ -106,7 +120,10 @@ async function ensureSetup(env) {
       .bind(username, username.toLowerCase(), await hashPassword(password), Date.now())
       .run();
   }
-  await db.prepare("INSERT OR IGNORE INTO settings (key, value) VALUES ('invite_code', ?)").bind(randomCode()).run();
+  await db
+    .prepare('INSERT OR IGNORE INTO settings (key, value) VALUES (?, ?)')
+    .bind(SETTING.inviteCode, randomCode())
+    .run();
   ready = true;
 }
 
@@ -175,14 +192,18 @@ app.post('/api/signup', async (c) => {
   const body = await readJson(c);
   const username = String(body.username ?? '').trim();
   if (!USERNAME_RE.test(username)) {
-    return fail(c, 400, 'Username must be 3 to 20 characters: letters, numbers, dot, dash or underscore.');
+    return fail(
+      c,
+      400,
+      `Username must be ${LIMITS.usernameMin} to ${LIMITS.usernameMax} characters: letters, numbers, dot, dash or underscore.`
+    );
   }
   const problem = passwordProblem(body.password);
   if (problem) return fail(c, 400, problem);
 
   // Check the code before anything else, so strangers cannot probe which usernames exist.
   const code = String(body.code ?? '').trim().toUpperCase();
-  if (code !== (await getSetting(db, 'invite_code')).toUpperCase()) {
+  if (code !== (await getSetting(db, SETTING.inviteCode)).toUpperCase()) {
     return fail(c, 403, 'That verification code is not right. Ask the admin for the current one.');
   }
   const key = username.toLowerCase();
@@ -190,24 +211,20 @@ app.post('/api/signup', async (c) => {
     return fail(c, 409, 'That username is taken.');
   }
 
-  let created;
-  try {
-    created = await db
+  return withConflict(c, 'That username is taken.', async () => {
+    const created = await db
       .prepare(
         `INSERT INTO users (username, username_key, password_hash, created_at)
          SELECT ?, ?, ?, ? WHERE (SELECT COUNT(*) FROM users) < ?`
       )
-      .bind(username, key, await hashPassword(body.password), Date.now(), MAX_USERS)
+      .bind(username, key, await hashPassword(body.password), Date.now(), LIMITS.maxUsers)
       .run();
-  } catch (err) {
-    if (isUniqueViolation(err)) return fail(c, 409, 'That username is taken.');
-    throw err;
-  }
-  if (!created.meta.changes) {
-    return fail(c, 403, `All ${MAX_USERS} accounts are taken. Ask the admin to free one up.`);
-  }
-  await startLogin(c, created.meta.last_row_id);
-  return c.json({ ok: true }, 201);
+    if (!created.meta.changes) {
+      return fail(c, 403, `All ${LIMITS.maxUsers} accounts are taken. Ask the admin to free one up.`);
+    }
+    await startLogin(c, created.meta.last_row_id);
+    return c.json({ ok: true }, 201);
+  });
 });
 
 app.post('/api/login', async (c) => {
@@ -255,13 +272,13 @@ app.post('/api/me/password', requireUser, async (c) => {
 // Polled every few seconds. `v` is the version the client already has.
 app.get('/api/state', requireUser, async (c) => {
   const db = c.env.DB;
-  const version = Number(await getSetting(db, 'version'));
+  const version = Number(await getSetting(db, SETTING.version));
   if (Number(c.req.query('v')) === version) return c.json({ version, unchanged: true });
 
-  const open = await db.prepare("SELECT * FROM order_sessions WHERE status = 'open'").first();
+  const open = await db.prepare('SELECT * FROM order_sessions WHERE status = ?').bind(STATUS.open).first();
   const { results } = await db
-    .prepare("SELECT * FROM order_sessions WHERE status = 'closed' ORDER BY closed_at DESC, id DESC LIMIT ?")
-    .bind(HISTORY_SIZE)
+    .prepare('SELECT * FROM order_sessions WHERE status = ? ORDER BY closed_at DESC, id DESC LIMIT ?')
+    .bind(STATUS.closed, LIMITS.historySize)
     .all();
   return c.json({
     version,
@@ -275,80 +292,65 @@ app.post('/api/sessions', requireUser, async (c) => {
   const db = c.env.DB;
   const user = c.get('user');
   const body = await readJson(c);
-  try {
+  return withConflict(c, 'A session is already open. Close it before starting a new one.', async () => {
     await db.batch([
       db
         .prepare('INSERT INTO order_sessions (title, purchaser_id, purchaser_name, created_at) VALUES (?, ?, ?, ?)')
-        .bind(cleanText(body.title, MAX_TITLE), user.id, user.username, Date.now()),
+        .bind(cleanText(body.title, LIMITS.title), user.id, user.username, Date.now()),
       bumpVersion(db),
     ]);
-  } catch (err) {
-    if (isUniqueViolation(err)) return fail(c, 409, 'A session is already open. Close it before starting a new one.');
-    throw err;
-  }
-  return c.json({ ok: true }, 201);
+    return c.json({ ok: true }, 201);
+  });
 });
 
-app.get('/api/sessions/:id', requireUser, async (c) => {
-  const session = await findSession(c.env.DB, idParam(c, 'id'));
-  if (!session) return fail(c, 404, 'That session no longer exists.');
-  return c.json({ session: await sessionWithOrders(c.env.DB, session) });
+app.get('/api/sessions/:id', requireUser, loadSession(), async (c) => {
+  return c.json({ session: await sessionWithOrders(c.env.DB, c.get('session')) });
 });
 
-app.post('/api/sessions/:id/close', requireUser, async (c) => {
+app.post('/api/sessions/:id/close', requireUser, loadSession('close'), async (c) => {
   const db = c.env.DB;
-  const session = await findSession(db, idParam(c, 'id'));
-  if (!session) return fail(c, 404, 'That session no longer exists.');
-  if (!canManage(c.get('user'), session)) return fail(c, 403, 'Only the purchaser can close this session.');
+  const session = c.get('session');
   await db.batch([
     db
-      .prepare("UPDATE order_sessions SET status = 'closed', closed_at = ? WHERE id = ? AND status = 'open'")
-      .bind(Date.now(), session.id),
+      .prepare('UPDATE order_sessions SET status = ?, closed_at = ? WHERE id = ? AND status = ?')
+      .bind(STATUS.closed, Date.now(), session.id, STATUS.open),
     db
       .prepare(
         `DELETE FROM order_sessions
-          WHERE status = 'closed'
-            AND id NOT IN (SELECT id FROM order_sessions WHERE status = 'closed' ORDER BY closed_at DESC, id DESC LIMIT ?)`
+          WHERE status = ?
+            AND id NOT IN (SELECT id FROM order_sessions WHERE status = ? ORDER BY closed_at DESC, id DESC LIMIT ?)`
       )
-      .bind(HISTORY_SIZE),
+      .bind(STATUS.closed, STATUS.closed, LIMITS.historySize),
     bumpVersion(db),
   ]);
   return c.json({ ok: true });
 });
 
-app.post('/api/sessions/:id/reopen', requireUser, async (c) => {
+app.post('/api/sessions/:id/reopen', requireUser, loadSession('reopen'), async (c) => {
   const db = c.env.DB;
-  const session = await findSession(db, idParam(c, 'id'));
-  if (!session) return fail(c, 404, 'That session no longer exists.');
-  if (!canManage(c.get('user'), session)) return fail(c, 403, 'Only the purchaser can reopen this session.');
-  try {
+  const session = c.get('session');
+  return withConflict(c, 'Another session is open. Close it first.', async () => {
     await db.batch([
-      db.prepare("UPDATE order_sessions SET status = 'open', closed_at = NULL WHERE id = ?").bind(session.id),
+      db.prepare('UPDATE order_sessions SET status = ?, closed_at = NULL WHERE id = ?').bind(STATUS.open, session.id),
       bumpVersion(db),
     ]);
-  } catch (err) {
-    if (isUniqueViolation(err)) return fail(c, 409, 'Another session is open. Close it first.');
-    throw err;
-  }
-  return c.json({ ok: true });
+    return c.json({ ok: true });
+  });
 });
 
-app.delete('/api/sessions/:id', requireUser, async (c) => {
+app.delete('/api/sessions/:id', requireUser, loadSession('delete'), async (c) => {
   const db = c.env.DB;
-  const session = await findSession(db, idParam(c, 'id'));
-  if (!session) return fail(c, 404, 'That session no longer exists.');
-  if (!canManage(c.get('user'), session)) return fail(c, 403, 'Only the purchaser can delete this session.');
+  const session = c.get('session');
   await db.batch([db.prepare('DELETE FROM order_sessions WHERE id = ?').bind(session.id), bumpVersion(db)]);
   return c.json({ ok: true });
 });
 
 // Adds or replaces one person's drink. People set their own; the purchaser can set anyone's.
-app.put('/api/sessions/:id/orders/:userId', requireUser, async (c) => {
+app.put('/api/sessions/:id/orders/:userId', requireUser, loadSession(), async (c) => {
   const db = c.env.DB;
   const user = c.get('user');
-  const session = await findSession(db, idParam(c, 'id'));
-  if (!session) return fail(c, 404, 'That session no longer exists.');
-  if (session.status !== 'open') return fail(c, 409, 'This session is closed.');
+  const session = c.get('session');
+  if (session.status !== STATUS.open) return fail(c, 409, 'This session is closed.');
 
   const targetId = idParam(c, 'userId');
   if (targetId !== user.id && session.purchaser_id !== user.id) {
@@ -361,7 +363,7 @@ app.put('/api/sessions/:id/orders/:userId', requireUser, async (c) => {
   const body = await readJson(c);
   const drink = validateDrink(body.drink);
   if (!drink) return fail(c, 400, 'That drink is not on the menu.');
-  const note = cleanText(body.note, MAX_NOTE);
+  const note = cleanText(body.note, LIMITS.note);
 
   await db.batch([
     db
@@ -391,7 +393,7 @@ app.delete('/api/orders/:id', requireUser, async (c) => {
     .bind(idParam(c, 'id'))
     .first();
   if (!order) return fail(c, 404, 'That drink was already removed.');
-  if (order.status !== 'open') return fail(c, 409, 'This session is closed.');
+  if (order.status !== STATUS.open) return fail(c, 409, 'This session is closed.');
   if (order.user_id !== user.id && order.purchaser_id !== user.id) {
     return fail(c, 403, "Only the purchaser can remove someone else's drink.");
   }
@@ -405,19 +407,21 @@ app.get('/api/users', requireUser, async (c) => {
   const { results } = await c.env.DB.prepare(
     'SELECT id, username, is_admin, last_drink FROM users ORDER BY username COLLATE NOCASE'
   ).all();
-  return c.json({ users: results.map(userJson), max: MAX_USERS });
+  return c.json({ users: results.map(userJson), max: LIMITS.maxUsers });
 });
 
 app.get('/api/admin/invite', requireUser, requireAdmin, async (c) => {
-  return c.json({ code: await getSetting(c.env.DB, 'invite_code') });
+  return c.json({ code: await getSetting(c.env.DB, SETTING.inviteCode) });
 });
 
 // Sets the verification code to the one given, or to a fresh random one if none is given.
 app.put('/api/admin/invite', requireUser, requireAdmin, async (c) => {
   const body = await readJson(c);
   const code = String(body.code ?? '').trim() || randomCode();
-  if (!/^\S{4,32}$/.test(code)) return fail(c, 400, 'The code must be 4 to 32 characters with no spaces.');
-  await c.env.DB.prepare("UPDATE settings SET value = ? WHERE key = 'invite_code'").bind(code).run();
+  if (!INVITE_CODE_RE.test(code)) {
+    return fail(c, 400, `The code must be ${LIMITS.inviteMin} to ${LIMITS.inviteMax} characters with no spaces.`);
+  }
+  await c.env.DB.prepare('UPDATE settings SET value = ? WHERE key = ?').bind(code, SETTING.inviteCode).run();
   return c.json({ code });
 });
 
@@ -446,9 +450,9 @@ app.delete('/api/admin/users/:id', requireUser, requireAdmin, async (c) => {
   await db.batch([
     db
       .prepare(
-        "DELETE FROM orders WHERE user_id = ? AND session_id IN (SELECT id FROM order_sessions WHERE status = 'open')"
+        'DELETE FROM orders WHERE user_id = ? AND session_id IN (SELECT id FROM order_sessions WHERE status = ?)'
       )
-      .bind(id),
+      .bind(id, STATUS.open),
     db.prepare('DELETE FROM users WHERE id = ?').bind(id),
     bumpVersion(db),
   ]);
