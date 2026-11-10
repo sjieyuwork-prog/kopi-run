@@ -11,7 +11,8 @@
   <body>
     <p id="offline" role="status" hidden>Offline, retrying…</p>
     <main id="app"><p class="loading muted">Loading…</p></main>
-    <dialog id="drink-dialog"></dialog>
+    <dialog id="drink-dialog" aria-labelledby="drink-dialog-title"></dialog>
+    <dialog id="reset-dialog" aria-labelledby="reset-dialog-title"></dialog>
     <div id="toast" role="status"></div>
     <div id="alert" role="alert" hidden><span></span><button type="button" aria-label="Dismiss">✕</button></div>
     <script type="module" src="/app.js"></script>

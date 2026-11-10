@@ -3,8 +3,9 @@
   --bg: #f6efe4;
   --card: #fffaf2;
   --ink: #2a1f17;
-  --muted: #75665a;
+  --muted: #685a4e;
   --line: #e2d5c2;
+  --field-border: #8c7a62; /* 3:1 or more against card, bg and soft */
   --soft: #efe4d2;
   --brand: #1f6b4a;
   --on-brand: #fff;
@@ -18,6 +19,7 @@
     --ink: #f3e9dc;
     --muted: #ab9c8d;
     --line: #3b3027;
+    --field-border: #857464;
     --soft: #30261e;
     --brand: #5dbd8f;
     --on-brand: #0d1a13;
@@ -175,7 +177,7 @@ select {
   width: 100%;
   min-height: 44px;
   padding: 0 12px;
-  border: 1px solid var(--line);
+  border: 1px solid var(--field-border);
   border-radius: 10px;
   background: var(--bg);
   color: var(--ink);
@@ -201,6 +203,7 @@ select:focus-visible,
 }
 
 .brand {
+  margin: 0;
   font-size: 1.2rem;
   font-weight: 800;
   letter-spacing: -0.01em;
@@ -375,7 +378,7 @@ legend {
   align-content: center;
   min-height: 44px;
   padding: 5px 14px;
-  border: 1px solid var(--line);
+  border: 1px solid var(--field-border);
   border-radius: 10px;
   background: var(--soft);
   line-height: 1.2;
