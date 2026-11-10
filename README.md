@@ -13,7 +13,9 @@ npm run dev
 
 Open http://localhost:8787. The first run asks to apply the database migration; answer yes.
 
-For phones on the same Wi-Fi, open `http://<your-computer's-IP>:8787` (`ipconfig` shows the IP). Allow Node.js through Windows Firewall if it asks.
+`npm run dev` only listens on this computer. To test from phones on the same Wi-Fi, run `npm run dev:lan` instead and open `https://<your-computer's-IP>:8787` (`ipconfig` shows the IP). It uses a self-signed certificate, so each device shows a warning the first time; accept it to continue. Allow Node.js through Windows Firewall if it asks.
+
+Do not expose the app on the network over plain HTTP (for example `wrangler dev --ip 0.0.0.0` without `--local-protocol https`): anyone on the same Wi-Fi can read passwords as they are typed and steal the login cookie.
 
 The admin account is created on first run from `ADMIN_USERNAME` and `ADMIN_PASSWORD` in `.dev.vars` (see `.dev.vars.example`). Log in as the admin and open the **Admin** tab to find the verification code that other people need to sign up.
 

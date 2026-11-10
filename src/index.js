@@ -2,6 +2,7 @@ import { Hono } from 'hono';
 import { deleteCookie, getCookie, setCookie } from 'hono/cookie';
 import { drinkName, validateDrink } from '../public/menu.js';
 import { hashPassword, randomCode, randomToken, sha256Hex, verifyPassword } from './crypto.js';
+import { SECURITY_HEADERS } from './headers.js';
 
 const MAX_USERS = 50;
 const HISTORY_SIZE = 5; // closed sessions kept; older ones are deleted
@@ -111,6 +112,8 @@ async function ensureSetup(env) {
 }
 
 app.use('/api/*', async (c, next) => {
+  // Set first so early refusals and error responses get them too.
+  for (const [name, value] of Object.entries(SECURITY_HEADERS)) c.header(name, value);
   // Browsers send Origin on every write, so a mismatch means another site is acting as the user.
   const origin = c.req.header('Origin');
   if (c.req.method !== 'GET' && origin && origin !== new URL(c.req.url).origin) {
@@ -144,7 +147,8 @@ async function startLogin(c, userId) {
     sameSite: 'Lax',
     path: '/',
     maxAge: LOGIN_SECONDS,
-    // Plain http is only used on the local network, where a Secure cookie would never be sent.
+    // Plain http is only used by `npm run dev` on 127.0.0.1, where a Secure cookie would never be sent.
+    // Everywhere else (deployed, `npm run dev:lan`) the request is https and the cookie is Secure.
     secure: new URL(c.req.url).protocol === 'https:',
   });
 }
