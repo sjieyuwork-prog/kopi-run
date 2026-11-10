@@ -1,0 +1,19 @@
+{
+  "name": "kopi-run",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "migrate": "wrangler d1 migrations apply kopi-run --local",
+    "dev": "npm run migrate && wrangler dev --ip 0.0.0.0",
+    "migrate:remote": "wrangler d1 migrations apply kopi-run --remote",
+    "deploy": "npm run migrate:remote && wrangler deploy",
+    "test": "node --test"
+  },
+  "dependencies": {
+    "hono": "^4.13.17"
+  },
+  "devDependencies": {
+    "wrangler": "^4.159.0"
+  }
+}

@@ -1,0 +1,17 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "kopi-run",
+  "main": "src/index.js",
+  "compatibility_date": "2025-09-01",
+  // Everything in public/ is served as-is; any other path (the /api routes) runs the Worker.
+  "assets": { "directory": "./public" },
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "kopi-run",
+      // Local dev ignores this. Before deploying, replace it with the id from `wrangler d1 create kopi-run`.
+      "database_id": "2b39119c-2a1e-44ce-a06f-f2c9cb6270f2",
+      "migrations_dir": "migrations"
+    }
+  ]
+}
