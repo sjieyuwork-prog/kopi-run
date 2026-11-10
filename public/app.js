@@ -1,3 +1,4 @@
+import { LIMITS, STATUS } from './limits.js';
 import { DRINKS, GROUPS, GROUP_ORDER, drinkName, validateDrink, withBase } from './menu.js';
 
 const POLL_MS = 5000;
@@ -15,7 +16,7 @@ const state = {
   authMode: 'login', // login | signup
   detail: null, // a closed session opened from History
   users: [], // admin page
-  maxUsers: 50,
+  maxUsers: LIMITS.maxUsers,
   invite: '',
 };
 
@@ -177,10 +178,10 @@ function authView() {
       </nav>
       <form data-form="${signup ? 'signup' : 'login'}" class="stack">
         <label>Username
-          <input name="username" autocomplete="username" autocapitalize="none" spellcheck="false" maxlength="20" required>
+          <input name="username" autocomplete="username" autocapitalize="none" spellcheck="false" maxlength="${LIMITS.usernameMax}" required>
         </label>
         <label>Password
-          <input name="password" type="password" autocomplete="${signup ? 'new-password' : 'current-password'}" ${signup ? 'minlength="10"' : ''} required>
+          <input name="password" type="password" autocomplete="${signup ? 'new-password' : 'current-password'}" ${signup ? `minlength="${LIMITS.passwordMin}"` : ''} required>
         </label>
         ${
           signup
@@ -227,7 +228,7 @@ function orderView() {
         <p class="muted">Start one when you are heading to the kopitiam. Whoever starts it is the purchaser.</p>
         <form data-form="start" class="stack">
           <label><span>Session name <span class="muted">(optional)</span></span>
-            <input name="title" maxlength="60" placeholder="e.g. Tuesday tea break">
+            <input name="title" maxlength="${LIMITS.title}" placeholder="e.g. Tuesday tea break">
           </label>
           <p class="error" role="alert" hidden></p>
           <button class="primary">Start a session</button>
@@ -238,7 +239,7 @@ function orderView() {
 }
 
 function sessionHead(s) {
-  const open = s.status === 'open';
+  const open = s.status === STATUS.open;
   return `
     <section class="card">
       <div class="row">
@@ -308,7 +309,7 @@ function summaryCard(s) {
 
 function peopleCard(s) {
   if (!s.orders.length) return '';
-  const canEdit = s.status === 'open' && s.purchaserId === state.me.id;
+  const canEdit = s.status === STATUS.open && s.purchaserId === state.me.id;
   const rows = s.orders.map((o) => {
     // The purchaser's own drink is managed from "Your drink" above.
     const tools =
@@ -339,7 +340,7 @@ function peopleCard(s) {
 }
 
 function manageCard(s) {
-  const open = s.status === 'open';
+  const open = s.status === STATUS.open;
   const isPurchaser = s.purchaserId === state.me.id;
   if (!isPurchaser && !state.me.isAdmin) return '';
   const buttons = [];
@@ -374,7 +375,7 @@ function historyView() {
   return `
     <section class="card">
       <h2>History</h2>
-      <p class="muted">The last 5 closed sessions are kept.</p>
+      <p class="muted">The last ${LIMITS.historySize} closed sessions are kept.</p>
       ${rows.length ? `<ul class="list">${rows.join('')}</ul>` : ''}
     </section>`;
 }
@@ -393,7 +394,7 @@ function accountView() {
           <input name="currentPassword" type="password" autocomplete="current-password" required>
         </label>
         <label>New password
-          <input name="newPassword" type="password" autocomplete="new-password" minlength="10" required>
+          <input name="newPassword" type="password" autocomplete="new-password" minlength="${LIMITS.passwordMin}" required>
         </label>
         <p class="error" role="alert" hidden></p>
         <button class="primary">Change password</button>
@@ -427,7 +428,7 @@ function adminView() {
       </div>
       <form data-form="code" class="stack">
         <label>Or set your own
-          <input name="code" minlength="8" maxlength="32" autocomplete="off" spellcheck="false" required>
+          <input name="code" minlength="${LIMITS.inviteMin}" maxlength="${LIMITS.inviteMax}" autocomplete="off" spellcheck="false" required>
         </label>
         <p class="error" role="alert" hidden></p>
         <button>Save code</button>
@@ -458,7 +459,7 @@ async function openDrinkDialog(userId) {
     draft.candidates = users.filter((u) => !ordered.has(u.id));
     if (!draft.candidates.length) return toast('Everyone already has a drink in this session.');
     draft.userId = draft.candidates[0].id;
-    saved = draft.candidates[0].lastOrder;
+    // Other people's saved orders stay private, so the picker starts from a plain drink.
   } else {
     const existing = s.orders.find((o) => o.userId === userId);
     draft.userName = existing?.userName ?? state.me.username;
@@ -495,7 +496,7 @@ function renderDialog() {
       </fieldset>
       <div id="drink-options" class="stack"></div>
       <label><span>Note <span class="muted">(optional)</span></span>
-        <input name="note" maxlength="80" placeholder="e.g. extra hot" value="${esc(draft.note)}">
+        <input name="note" maxlength="${LIMITS.note}" placeholder="e.g. extra hot" value="${esc(draft.note)}">
       </label>
       <p class="preview">
         <span class="muted">This will be ordered as</span>
@@ -539,7 +540,6 @@ $dialog.addEventListener('change', (e) => {
   if (name === 'user') {
     const person = draft.candidates.find((u) => u.id === Number(value));
     draft.userId = person.id;
-    fillDraft(person.lastOrder);
     renderDialog();
     $dialog.querySelector('select').focus();
   } else if (name === 'base') {
@@ -630,7 +630,7 @@ const actions = {
     render();
   },
   async 'reset-password'(el) {
-    const password = prompt(`New password for ${el.dataset.name} (at least 10 characters):`);
+    const password = prompt(`New password for ${el.dataset.name} (at least ${LIMITS.passwordMin} characters):`);
     if (!password) return;
     await api('POST', `/admin/users/${el.dataset.user}/password`, { password });
     toast(`Password reset. Tell ${el.dataset.name} the new one.`);
