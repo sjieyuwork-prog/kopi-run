@@ -28,7 +28,12 @@ function fakeD1() {
           const row = sql.prepare(query).get(...args);
           return row ? (column ? row[column] : { ...row }) : null;
         },
-        all: async () => ({ results: sql.prepare(query).all(...args).map((r) => ({ ...r })) }),
+        all: async () => ({
+          results: sql
+            .prepare(query)
+            .all(...args)
+            .map((r) => ({ ...r })),
+        }),
         run: async () => exec(query, args),
       });
       return make([]);
@@ -62,17 +67,30 @@ async function setup() {
   // purchaser = 2, alice = 3; the admin (1) is created by the Worker itself.
   await app.request('/api/state', {}, env);
   for (const name of ['purchaser', 'alice']) {
-    DB.sql.prepare('INSERT INTO users (username, username_key, password_hash, created_at) VALUES (?, ?, ?, ?)').run(name, name, 'x', now);
+    DB.sql
+      .prepare('INSERT INTO users (username, username_key, password_hash, created_at) VALUES (?, ?, ?, ?)')
+      .run(name, name, 'x', now);
   }
-  const ids = Object.fromEntries(DB.sql.prepare('SELECT username, id FROM users').all().map((r) => [r.username, r.id]));
+  const ids = Object.fromEntries(
+    DB.sql
+      .prepare('SELECT username, id FROM users')
+      .all()
+      .map((r) => [r.username, r.id]),
+  );
   for (const name of Object.keys(ids)) {
-    DB.sql.prepare('INSERT INTO auth_tokens (token_hash, user_id, expires_at) VALUES (?, ?, ?)').run(await sha256Hex(`tok-${name}`), ids[name], now + 1e9);
+    DB.sql
+      .prepare('INSERT INTO auth_tokens (token_hash, user_id, expires_at) VALUES (?, ?, ?)')
+      .run(await sha256Hex(`tok-${name}`), ids[name], now + 1e9);
   }
   const call = async (who, method, path, body) => {
     const res = await app.request(
       `/api${path}`,
-      { method, headers: { Cookie: `kopi_sid=tok-${who}`, 'Content-Type': 'application/json' }, body: body && JSON.stringify(body) },
-      env
+      {
+        method,
+        headers: { Cookie: `kopi_sid=tok-${who}`, 'Content-Type': 'application/json' },
+        body: body && JSON.stringify(body),
+      },
+      env,
     );
     return { status: res.status, data: await res.json() };
   };

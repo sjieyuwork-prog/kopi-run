@@ -37,7 +37,13 @@ const ESCAPES = { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&
 const esc = (text) => String(text ?? '').replace(/[&<>"']/g, (ch) => ESCAPES[ch]);
 
 const fmtTime = (ms) =>
-  new Date(ms).toLocaleString([], { weekday: 'short', day: 'numeric', month: 'short', hour: 'numeric', minute: '2-digit' });
+  new Date(ms).toLocaleString([], {
+    weekday: 'short',
+    day: 'numeric',
+    month: 'short',
+    hour: 'numeric',
+    minute: '2-digit',
+  });
 
 const plural = (n, word) => `${n} ${word}${n === 1 ? '' : 's'}`;
 const sessionTitle = (s) => s.title || 'Drinks run';
@@ -102,7 +108,10 @@ async function withLoading(task) {
 
 function showError(form, message) {
   const el = form.querySelector('.error');
-  if (!el) return alertError(message);
+  if (!el) {
+    alertError(message);
+    return;
+  }
   el.textContent = message;
   el.hidden = false;
 }
@@ -415,7 +424,7 @@ function summaryCard(s) {
           ${g.note ? `<span class="note">${esc(g.note)}</span>` : ''}
           <small>${esc(g.names.join(', '))}</small>
         </div>
-      </li>`
+      </li>`,
   );
   return `
     <section class="card">
@@ -490,7 +499,7 @@ function historyView() {
           <strong>${esc(sessionTitle(h))}</strong>
           <small>${fmtTime(h.closedAt)} · ${esc(h.purchaserName)} bought</small>
         </button>
-      </li>`
+      </li>`,
   );
   return `
     <section class="card">
@@ -559,7 +568,7 @@ function adminView() {
                 <button class="danger" data-action="delete-user" data-user="${u.id}" data-name="${esc(u.username)}">Delete</button>
               </div>`
         }
-      </li>`
+      </li>`,
   );
   return `
     <section class="card">
@@ -602,7 +611,10 @@ async function openDrinkDialog(userId) {
     const { users } = await api('GET', '/users');
     const ordered = new Set(s.orders.map((o) => o.userId));
     draft.candidates = users.filter((u) => !ordered.has(u.id));
-    if (!draft.candidates.length) return toast('Everyone already has a drink in this session.');
+    if (!draft.candidates.length) {
+      toast('Everyone already has a drink in this session.');
+      return;
+    }
     draft.userId = draft.candidates[0].id;
     // Other people's saved orders stay private, so the picker starts from a plain drink.
   } else {
@@ -627,7 +639,7 @@ function renderDialog() {
   if (draft.candidates) title = 'Add a drink for someone';
   else if (draft.userId === state.me.id) title = 'Your drink';
   const people = (draft.candidates ?? []).map(
-    (u) => `<option value="${u.id}" ${u.id === draft.userId ? 'selected' : ''}>${esc(u.username)}</option>`
+    (u) => `<option value="${u.id}" ${u.id === draft.userId ? 'selected' : ''}>${esc(u.username)}</option>`,
   );
   $dialog.innerHTML = `
     <form class="stack">
@@ -671,7 +683,7 @@ function renderOptions() {
               .map((o) => chip(group, o.id, o.label, o.hint, draft.drink[group] === o.id))
               .join('')}
           </div>
-        </fieldset>`
+        </fieldset>`,
     )
     .join('');
   updatePreview();
@@ -713,7 +725,8 @@ $dialog.addEventListener('submit', async (e) => {
     if (err.status === 409 || err.status === 404) {
       // The form no longer matches the list; close it so the user sees the current drinks.
       $dialog.close();
-      return toast(err.message);
+      toast(err.message);
+      return;
     }
     showError(form, err.message);
   } finally {
@@ -753,8 +766,14 @@ $reset.addEventListener('submit', async (e) => {
   e.preventDefault();
   const form = e.target;
   const { password, confirm: repeat } = form.elements;
-  if (password.value.length < LIMITS.passwordMin) return showError(form, `Use at least ${LIMITS.passwordMin} characters.`);
-  if (password.value !== repeat.value) return showError(form, 'The two passwords do not match.');
+  if (password.value.length < LIMITS.passwordMin) {
+    showError(form, `Use at least ${LIMITS.passwordMin} characters.`);
+    return;
+  }
+  if (password.value !== repeat.value) {
+    showError(form, 'The two passwords do not match.');
+    return;
+  }
   const save = form.querySelector('button.primary');
   save.disabled = true;
   try {
@@ -856,7 +875,10 @@ const actions = {
   },
   'reset-password': (el) => openResetDialog(Number(el.dataset.user), el.dataset.name),
   async 'delete-user'(el) {
-    if (!confirm(`Delete ${el.dataset.name}'s account? Their drinks are removed from every session, including past ones.`)) return;
+    if (
+      !confirm(`Delete ${el.dataset.name}'s account? Their drinks are removed from every session, including past ones.`)
+    )
+      return;
     await api('DELETE', `/admin/users/${el.dataset.user}`);
     await loadAdmin();
   },
@@ -936,7 +958,10 @@ document.addEventListener('visibilitychange', poll);
 function startup() {
   $app.innerHTML = loadingCard();
   sync().catch((err) => {
-    if (err.status === 401) return render();
+    if (err.status === 401) {
+      render();
+      return;
+    }
     $app.innerHTML = `
       <section class="card">
         <h2>Kopi Run could not load</h2>

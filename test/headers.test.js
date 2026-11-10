@@ -9,7 +9,12 @@ test('static files get the same security headers as the API', async () => {
     text
       .split('\n')
       .filter((line) => /^\s+\S/.test(line))
-      .map((line) => line.trim().split(/:\s*(.*)/s).slice(0, 2))
+      .map((line) =>
+        line
+          .trim()
+          .split(/:\s*(.*)/s)
+          .slice(0, 2),
+      ),
   );
   assert.deepEqual(headers, SECURITY_HEADERS);
 });

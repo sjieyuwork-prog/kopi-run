@@ -15,7 +15,7 @@ export const pruneHistory = (db) =>
     .prepare(
       `DELETE FROM order_sessions
         WHERE status = ?1
-          AND id NOT IN (SELECT id FROM order_sessions WHERE status = ?1 ORDER BY closed_at DESC, id DESC LIMIT ?2)`
+          AND id NOT IN (SELECT id FROM order_sessions WHERE status = ?1 ORDER BY closed_at DESC, id DESC LIMIT ?2)`,
     )
     .bind(STATUS.closed, LIMITS.historySize);
 
@@ -35,9 +35,11 @@ export const purge = (db, now = Date.now()) => [
     .prepare(
       `UPDATE order_sessions SET status = ?, closed_at = ?
         WHERE status = ?
-          AND MAX(created_at, COALESCE((SELECT MAX(updated_at) FROM orders WHERE session_id = order_sessions.id), 0)) <= ?`
+          AND MAX(created_at, COALESCE((SELECT MAX(updated_at) FROM orders WHERE session_id = order_sessions.id), 0)) <= ?`,
     )
     .bind(STATUS.closed, now, STATUS.open, now - STALE_OPEN_HOURS * 60 * 60 * 1000),
-  db.prepare('DELETE FROM order_sessions WHERE status = ? AND closed_at <= ?').bind(STATUS.closed, now - HISTORY_DAYS * DAY),
+  db
+    .prepare('DELETE FROM order_sessions WHERE status = ? AND closed_at <= ?')
+    .bind(STATUS.closed, now - HISTORY_DAYS * DAY),
   pruneHistory(db),
 ];

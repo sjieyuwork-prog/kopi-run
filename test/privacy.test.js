@@ -20,7 +20,12 @@ function d1(sqlite) {
       return column ? row[column] : { ...row };
     },
     async all() {
-      return { results: sqlite.prepare(sql).all(...args).map((row) => ({ ...row })) };
+      return {
+        results: sqlite
+          .prepare(sql)
+          .all(...args)
+          .map((row) => ({ ...row })),
+      };
     },
   });
   return {
@@ -55,7 +60,7 @@ async function call(cookie, method, path, body) {
   if (cookie) headers.Cookie = cookie;
   const res = await worker.fetch(
     new Request(`http://kopi.test/api${path}`, { method, headers, body: body ? JSON.stringify(body) : undefined }),
-    env
+    env,
   );
   const setCookie = res.headers.get('Set-Cookie');
   return { status: res.status, data: await res.json(), cookie: setCookie?.split(';')[0] };
@@ -76,7 +81,10 @@ async function runSession(purchaser, people, { close = false } = {}) {
   assert.equal((await call(purchaser.cookie, 'POST', '/sessions', { title: 'run' })).status, 201);
   const { id } = one("SELECT id FROM order_sessions WHERE status = 'open'");
   for (const p of people) {
-    assert.equal((await call(p.cookie, 'PUT', `/sessions/${id}/orders/${p.id}`, { drink: kopi, note: 'hot' })).status, 200);
+    assert.equal(
+      (await call(p.cookie, 'PUT', `/sessions/${id}/orders/${p.id}`, { drink: kopi, note: 'hot' })).status,
+      200,
+    );
   }
   if (close) assert.equal((await call(purchaser.cookie, 'POST', `/sessions/${id}/close`)).status, 200);
   return id;
@@ -136,12 +144,14 @@ test('the daily cleanup purges expired logins, abandoned sessions and old histor
   const hour = 60 * 60 * 1000;
   const { id: userId } = one("SELECT id FROM users WHERE username = 'boss'");
   sqlite.exec('DELETE FROM order_sessions');
-  sqlite.prepare("INSERT INTO auth_tokens VALUES ('old', ?, ?), ('live', ?, ?)").run(userId, now - 1, userId, now + hour);
+  sqlite
+    .prepare("INSERT INTO auth_tokens VALUES ('old', ?, ?), ('live', ?, ?)")
+    .run(userId, now - 1, userId, now + hour);
   const addSession = (status, created, closed) =>
     Number(
       sqlite
         .prepare("INSERT INTO order_sessions (purchaser_name, status, created_at, closed_at) VALUES ('x', ?, ?, ?)")
-        .run(status, created, closed).lastInsertRowid
+        .run(status, created, closed).lastInsertRowid,
     );
   const stale = addSession('open', now - (STALE_OPEN_HOURS + 1) * hour, null);
   const expired = addSession('closed', now - (HISTORY_DAYS + 2) * 24 * hour, now - (HISTORY_DAYS + 1) * 24 * hour);
@@ -151,7 +161,7 @@ test('the daily cleanup purges expired logins, abandoned sessions and old histor
 
   assert.deepEqual(
     rows("SELECT token_hash FROM auth_tokens WHERE token_hash IN ('old', 'live')").map((r) => r.token_hash),
-    ['live']
+    ['live'],
   );
   assert.equal(one('SELECT status FROM order_sessions WHERE id = ?', stale).status, 'closed');
   assert.equal(one('SELECT 1 AS x FROM order_sessions WHERE id = ?', expired), undefined);

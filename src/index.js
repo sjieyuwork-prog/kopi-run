@@ -18,7 +18,11 @@ class SetupError extends Error {}
 
 const fail = (c, status, error) => c.json({ error }, status);
 const tooMany = (c) => fail(c, 429, 'Too many attempts. Wait 15 minutes, then try again.');
-const cleanText = (value, max) => String(value ?? '').replace(/\s+/g, ' ').trim().slice(0, max);
+const cleanText = (value, max) =>
+  String(value ?? '')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .slice(0, max);
 const isUniqueViolation = (err) => String(err?.message).includes('UNIQUE constraint failed');
 
 // Ids start at 1, so anything unparseable becomes 0 and simply finds nothing.
@@ -77,7 +81,7 @@ const sessionJson = (row) => ({
 async function sessionWithOrders(db, row) {
   const { results } = await db
     .prepare(
-      'SELECT id, user_id, user_name, drink, drink_name, note, updated_at FROM orders WHERE session_id = ? ORDER BY user_name COLLATE NOCASE'
+      'SELECT id, user_id, user_name, drink, drink_name, note, updated_at FROM orders WHERE session_id = ? ORDER BY user_name COLLATE NOCASE',
     )
     .bind(row.id)
     .all();
@@ -97,6 +101,7 @@ const findSession = (db, id) => db.prepare('SELECT * FROM order_sessions WHERE i
 const canManage = (user, session) => user.isAdmin || session.purchaser_id === user.id;
 
 // Puts the :id session in c.get('session'). With a verb, only the purchaser or the admin may go on.
+// eslint-disable-next-line consistent-return -- Hono middleware returns a Response to stop early, or nothing after next().
 const loadSession = (verb) => async (c, next) => {
   const session = await findSession(c.env.DB, idParam(c, 'id'));
   if (!session) return fail(c, 404, 'That session no longer exists.');
@@ -120,7 +125,7 @@ async function ensureSetup(env) {
     }
     await db
       .prepare(
-        'INSERT OR IGNORE INTO users (username, username_key, password_hash, is_admin, created_at) VALUES (?, ?, ?, 1, ?)'
+        'INSERT OR IGNORE INTO users (username, username_key, password_hash, is_admin, created_at) VALUES (?, ?, ?, 1, ?)',
       )
       .bind(username, username.toLowerCase(), await hashPassword(password), Date.now())
       .run();
@@ -132,6 +137,7 @@ async function ensureSetup(env) {
   ready = true;
 }
 
+// eslint-disable-next-line consistent-return -- Hono middleware returns a Response to stop early, or nothing after next().
 app.use('/api/*', async (c, next) => {
   // Set first so early refusals and error responses get them too.
   for (const [name, value] of Object.entries(SECURITY_HEADERS)) c.header(name, value);
@@ -175,6 +181,7 @@ async function startLogin(c, userId) {
   });
 }
 
+// eslint-disable-next-line consistent-return -- Hono middleware returns a Response to stop early, or nothing after next().
 const requireUser = async (c, next) => {
   const token = getCookie(c, COOKIE);
   const row =
@@ -182,7 +189,7 @@ const requireUser = async (c, next) => {
     (await c.env.DB.prepare(
       `SELECT u.id, u.username, u.is_admin, u.last_drink
          FROM auth_tokens t JOIN users u ON u.id = t.user_id
-        WHERE t.token_hash = ? AND t.expires_at > ?`
+        WHERE t.token_hash = ? AND t.expires_at > ?`,
     )
       .bind(await sha256Hex(token), Date.now())
       .first());
@@ -191,6 +198,7 @@ const requireUser = async (c, next) => {
   await next();
 };
 
+// eslint-disable-next-line consistent-return -- Hono middleware returns a Response to stop early, or nothing after next().
 const requireAdmin = async (c, next) => {
   if (!c.get('user').isAdmin) return fail(c, 403, 'Only the admin can do that.');
   await next();
@@ -204,7 +212,7 @@ app.post('/api/signup', async (c) => {
     return fail(
       c,
       400,
-      `Username must be ${LIMITS.usernameMin} to ${LIMITS.usernameMax} characters: letters, numbers, dot, dash or underscore.`
+      `Username must be ${LIMITS.usernameMin} to ${LIMITS.usernameMax} characters: letters, numbers, dot, dash or underscore.`,
     );
   }
   const problem = passwordProblem(body.password);
@@ -216,7 +224,9 @@ app.post('/api/signup', async (c) => {
   await recordAttempt(db, 'signup-ip', ip).run();
 
   // Check the code before anything else, so strangers cannot probe which usernames exist.
-  const code = String(body.code ?? '').trim().toUpperCase();
+  const code = String(body.code ?? '')
+    .trim()
+    .toUpperCase();
   if (code !== (await getSetting(db, SETTING.inviteCode)).toUpperCase()) {
     return fail(c, 403, 'That verification code is not right. Ask the admin for the current one.');
   }
@@ -229,7 +239,7 @@ app.post('/api/signup', async (c) => {
     const created = await db
       .prepare(
         `INSERT INTO users (username, username_key, password_hash, created_at)
-         SELECT ?, ?, ?, ? WHERE (SELECT COUNT(*) FROM users) < ?`
+         SELECT ?, ?, ?, ? WHERE (SELECT COUNT(*) FROM users) < ?`,
       )
       .bind(username, key, await hashPassword(body.password), Date.now(), LIMITS.maxUsers)
       .run();
@@ -244,7 +254,9 @@ app.post('/api/signup', async (c) => {
 app.post('/api/login', async (c) => {
   const db = c.env.DB;
   const body = await readJson(c);
-  const key = String(body.username ?? '').trim().toLowerCase();
+  const key = String(body.username ?? '')
+    .trim()
+    .toLowerCase();
   const ip = clientIp(c);
   if ((await isLimited(db, 'login-ip', ip)) || (await isLimited(db, 'login-user', key))) return tooMany(c);
 
@@ -263,7 +275,9 @@ app.post('/api/login', async (c) => {
 app.post('/api/logout', async (c) => {
   const token = getCookie(c, COOKIE);
   if (token) {
-    await c.env.DB.prepare('DELETE FROM auth_tokens WHERE token_hash = ?').bind(await sha256Hex(token)).run();
+    await c.env.DB.prepare('DELETE FROM auth_tokens WHERE token_hash = ?')
+      .bind(await sha256Hex(token))
+      .run();
   }
   deleteCookie(c, COOKIE, { path: '/' });
   return c.json({ ok: true });
@@ -409,7 +423,9 @@ app.put('/api/sessions/:id/orders/:userId', requireUser, loadSession(), async (c
     return fail(c, 403, 'Only the purchaser can order for someone else.');
   }
   const target =
-    targetId === user.id ? user : await db.prepare('SELECT id, username FROM users WHERE id = ?').bind(targetId).first();
+    targetId === user.id
+      ? user
+      : await db.prepare('SELECT id, username FROM users WHERE id = ?').bind(targetId).first();
   if (!target) return fail(c, 404, 'That account no longer exists.');
 
   const body = await readJson(c);
@@ -426,7 +442,7 @@ app.put('/api/sessions/:id/orders/:userId', requireUser, loadSession(), async (c
              SELECT ?1, ?2, ?3, ?4, ?5, ?6, ?7
               WHERE EXISTS (SELECT 1 FROM order_sessions WHERE id = ?1 AND status = ?9)
                 AND EXISTS (SELECT 1 FROM users WHERE id = ?2)
-             ON CONFLICT (session_id, user_id) DO NOTHING`
+             ON CONFLICT (session_id, user_id) DO NOTHING`,
           )
           .bind(session.id, target.id, ...values, null, STATUS.open)
       : db
@@ -434,7 +450,7 @@ app.put('/api/sessions/:id/orders/:userId', requireUser, loadSession(), async (c
             // updated_at always moves forward, so two saves in the same millisecond still differ.
             `UPDATE orders SET user_name = ?3, drink = ?4, drink_name = ?5, note = ?6, updated_at = MAX(?7, updated_at + 1)
               WHERE session_id = ?1 AND user_id = ?2 AND updated_at = ?8
-                AND EXISTS (SELECT 1 FROM order_sessions WHERE id = ?1 AND status = ?9)`
+                AND EXISTS (SELECT 1 FROM order_sessions WHERE id = ?1 AND status = ?9)`,
           )
           .bind(session.id, target.id, ...values, Number(body.updatedAt), STATUS.open);
   // Bumping the version when nothing changed is harmless: clients just reload once.
@@ -444,7 +460,10 @@ app.put('/api/sessions/:id/orders/:userId', requireUser, loadSession(), async (c
   // Only your own order becomes your "same as last time"; the purchaser's picks for others don't.
   // It only pre-fills the form next time, so it does not need to be in the same batch.
   if (target.id === user.id) {
-    await db.prepare('UPDATE users SET last_drink = ? WHERE id = ?').bind(JSON.stringify({ drink, note }), user.id).run();
+    await db
+      .prepare('UPDATE users SET last_drink = ? WHERE id = ?')
+      .bind(JSON.stringify({ drink, note }), user.id)
+      .run();
   }
   return c.json({ ok: true });
 });
@@ -456,7 +475,7 @@ app.delete('/api/orders/:id', requireUser, async (c) => {
     .prepare(
       `SELECT o.id, o.session_id, o.user_id, s.status, s.purchaser_id
          FROM orders o JOIN order_sessions s ON s.id = o.session_id
-        WHERE o.id = ?`
+        WHERE o.id = ?`,
     )
     .bind(idParam(c, 'id'))
     .first();
@@ -469,7 +488,7 @@ app.delete('/api/orders/:id', requireUser, async (c) => {
     db
       .prepare(
         `DELETE FROM orders WHERE id = ?
-           AND session_id IN (SELECT id FROM order_sessions WHERE status = ?)`
+           AND session_id IN (SELECT id FROM order_sessions WHERE status = ?)`,
       )
       .bind(order.id, STATUS.open),
     bumpVersion(db),
@@ -490,14 +509,17 @@ app.get('/api/users', requireUser, async (c) => {
   const db = c.env.DB;
   const user = c.get('user');
   if (!user.isAdmin) {
-    const open = await db.prepare('SELECT 1 FROM order_sessions WHERE status = ? AND purchaser_id = ?')
+    const open = await db
+      .prepare('SELECT 1 FROM order_sessions WHERE status = ? AND purchaser_id = ?')
       .bind(STATUS.open, user.id)
       .first();
     if (!open) return fail(c, 403, 'Only the purchaser of the open session can see the list of people.');
   }
-  const { results } = await db.prepare('SELECT id, username, is_admin FROM users ORDER BY username COLLATE NOCASE').all();
+  const { results } = await db
+    .prepare('SELECT id, username, is_admin FROM users ORDER BY username COLLATE NOCASE')
+    .all();
   const users = results.map((u) =>
-    user.isAdmin ? { id: u.id, username: u.username, isAdmin: u.is_admin === 1 } : { id: u.id, username: u.username }
+    user.isAdmin ? { id: u.id, username: u.username, isAdmin: u.is_admin === 1 } : { id: u.id, username: u.username },
   );
   return c.json({ users, max: LIMITS.maxUsers });
 });

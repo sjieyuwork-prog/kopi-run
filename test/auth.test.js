@@ -118,7 +118,12 @@ test('one IP is blocked after 20 failed logins across usernames', async () => {
 test('one IP gets 10 sign-up attempts per window', async () => {
   const ip = freshIp();
   for (let i = 0; i < 10; i++) {
-    const res = await call('POST', '/api/signup', { username: `guesser${i}`, password: 'a-long-password', code: `WRONG${i}` }, { ip });
+    const res = await call(
+      'POST',
+      '/api/signup',
+      { username: `guesser${i}`, password: 'a-long-password', code: `WRONG${i}` },
+      { ip },
+    );
     assert.equal(res.status, 403);
   }
   const code = await inviteCode();

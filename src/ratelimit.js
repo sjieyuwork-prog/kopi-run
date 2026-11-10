@@ -27,7 +27,7 @@ export function recordAttempt(db, kind, id, now = Date.now()) {
       `INSERT INTO rate_limits (key, count, window_start) VALUES (?1, 1, ?2)
        ON CONFLICT (key) DO UPDATE SET
          count        = CASE WHEN window_start <= ?3 THEN 1  ELSE count + 1  END,
-         window_start = CASE WHEN window_start <= ?3 THEN ?2 ELSE window_start END`
+         window_start = CASE WHEN window_start <= ?3 THEN ?2 ELSE window_start END`,
     )
     .bind(`${kind}:${id}`, now, now - WINDOW_MS);
 }
