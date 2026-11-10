@@ -1,4 +1,4 @@
 # Copy to .dev.vars for local development.
 # The admin account is created from these the first time the app runs.
 ADMIN_USERNAME=your-name
-ADMIN_PASSWORD=at-least-6-characters
+ADMIN_PASSWORD=at-least-10-characters

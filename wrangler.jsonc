@@ -5,6 +5,8 @@
   "compatibility_date": "2025-09-01",
   // Everything in public/ is served as-is; any other path (the /api routes) runs the Worker.
   "assets": { "directory": "./public" },
+  // Daily cleanup of expired logins and old sessions (the `scheduled` handler in src/index.js). 19:00 UTC is 3am in Singapore.
+  "triggers": { "crons": ["0 19 * * *"] },
   "d1_databases": [
     {
       "binding": "DB",

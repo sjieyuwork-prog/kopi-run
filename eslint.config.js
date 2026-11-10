@@ -7,5 +7,5 @@ export default [
   { files: ['public/**/*.js'], languageOptions: { globals: globals.browser } },
   { files: ['src/**/*.js'], languageOptions: { globals: globals.serviceworker } },
   { files: ['test/**/*.js', '*.js'], languageOptions: { globals: globals.node } },
-  { rules: { 'consistent-return': 'error', eqeqeq: 'error', 'no-alert': 'warn' } },
+  { rules: { 'consistent-return': 'error', eqeqeq: ['error', 'always', { null: 'ignore' }], 'no-alert': 'warn' } },
 ];
