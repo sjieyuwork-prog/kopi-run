@@ -68,7 +68,7 @@ const sessionJson = (row) => ({
 async function sessionWithOrders(db, row) {
   const { results } = await db
     .prepare(
-      'SELECT id, user_id, user_name, drink, drink_name, note FROM orders WHERE session_id = ? ORDER BY user_name COLLATE NOCASE'
+      'SELECT id, user_id, user_name, drink, drink_name, note, updated_at FROM orders WHERE session_id = ? ORDER BY user_name COLLATE NOCASE'
     )
     .bind(row.id)
     .all();
@@ -79,6 +79,7 @@ async function sessionWithOrders(db, row) {
     drink: JSON.parse(o.drink),
     drinkName: o.drink_name,
     note: o.note,
+    updatedAt: o.updated_at,
   }));
   return { ...sessionJson(row), orders };
 }
@@ -342,7 +343,22 @@ app.delete('/api/sessions/:id', requireUser, async (c) => {
   return c.json({ ok: true });
 });
 
-// Adds or replaces one person's drink. People set their own; the purchaser can set anyone's.
+// Every order write is conditional, because the session can close and other people can edit
+// between the checks above and the write itself. When a write changes nothing, this says why.
+async function orderConflict(c, sessionId, targetId) {
+  const db = c.env.DB;
+  const session = await findSession(db, sessionId);
+  if (!session) return fail(c, 404, 'That session no longer exists.');
+  if (session.status !== 'open') return fail(c, 409, 'This session is closed.');
+  if (targetId && !(await db.prepare('SELECT 1 FROM users WHERE id = ?').bind(targetId).first())) {
+    return fail(c, 404, 'That account no longer exists.');
+  }
+  return fail(c, 409, 'Someone changed this drink at the same time. Check the list and try again.');
+}
+
+// Adds or changes one person's drink. People set their own; the purchaser can set anyone's.
+// Send `updatedAt` from the loaded order to change it; leave it out to add a drink for someone
+// who has none. Either way, a drink someone else saved in the meantime is never overwritten.
 app.put('/api/sessions/:id/orders/:userId', requireUser, async (c) => {
   const db = c.env.DB;
   const user = c.get('user');
@@ -362,20 +378,33 @@ app.put('/api/sessions/:id/orders/:userId', requireUser, async (c) => {
   const drink = validateDrink(body.drink);
   if (!drink) return fail(c, 400, 'That drink is not on the menu.');
   const note = cleanText(body.note, MAX_NOTE);
+  const values = [target.username, JSON.stringify(drink), drinkName(drink), note, Date.now()];
 
-  await db.batch([
-    db
-      .prepare(
-        `INSERT INTO orders (session_id, user_id, user_name, drink, drink_name, note, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?)
-         ON CONFLICT (session_id, user_id) DO UPDATE SET
-           user_name = excluded.user_name, drink = excluded.drink, drink_name = excluded.drink_name,
-           note = excluded.note, updated_at = excluded.updated_at`
-      )
-      .bind(session.id, target.id, target.username, JSON.stringify(drink), drinkName(drink), note, Date.now()),
-    db.prepare('UPDATE users SET last_drink = ? WHERE id = ?').bind(JSON.stringify({ drink, note }), target.id),
-    bumpVersion(db),
-  ]);
+  const write =
+    body.updatedAt == null
+      ? db
+          .prepare(
+            `INSERT INTO orders (session_id, user_id, user_name, drink, drink_name, note, updated_at)
+             SELECT ?1, ?2, ?3, ?4, ?5, ?6, ?7
+              WHERE EXISTS (SELECT 1 FROM order_sessions WHERE id = ?1 AND status = 'open')
+                AND EXISTS (SELECT 1 FROM users WHERE id = ?2)
+             ON CONFLICT (session_id, user_id) DO NOTHING`
+          )
+          .bind(session.id, target.id, ...values)
+      : db
+          .prepare(
+            // updated_at always moves forward, so two saves in the same millisecond still differ.
+            `UPDATE orders SET user_name = ?3, drink = ?4, drink_name = ?5, note = ?6, updated_at = MAX(?7, updated_at + 1)
+              WHERE session_id = ?1 AND user_id = ?2 AND updated_at = ?8
+                AND EXISTS (SELECT 1 FROM order_sessions WHERE id = ?1 AND status = 'open')`
+          )
+          .bind(session.id, target.id, ...values, Number(body.updatedAt));
+  // Bumping the version when nothing changed is harmless: clients just reload once.
+  const [written] = await db.batch([write, bumpVersion(db)]);
+  if (!written.meta.changes) return orderConflict(c, session.id, target.id);
+
+  // Only pre-fills the form next time, so it does not need to be in the same batch.
+  await db.prepare('UPDATE users SET last_drink = ? WHERE id = ?').bind(JSON.stringify({ drink, note }), target.id).run();
   return c.json({ ok: true });
 });
 
@@ -384,7 +413,7 @@ app.delete('/api/orders/:id', requireUser, async (c) => {
   const user = c.get('user');
   const order = await db
     .prepare(
-      `SELECT o.id, o.user_id, s.status, s.purchaser_id
+      `SELECT o.id, o.session_id, o.user_id, s.status, s.purchaser_id
          FROM orders o JOIN order_sessions s ON s.id = o.session_id
         WHERE o.id = ?`
     )
@@ -395,7 +424,20 @@ app.delete('/api/orders/:id', requireUser, async (c) => {
   if (order.user_id !== user.id && order.purchaser_id !== user.id) {
     return fail(c, 403, "Only the purchaser can remove someone else's drink.");
   }
-  await db.batch([db.prepare('DELETE FROM orders WHERE id = ?').bind(order.id), bumpVersion(db)]);
+  const [removed] = await db.batch([
+    db
+      .prepare(
+        `DELETE FROM orders WHERE id = ?
+           AND session_id IN (SELECT id FROM order_sessions WHERE status = 'open')`
+      )
+      .bind(order.id),
+    bumpVersion(db),
+  ]);
+  if (!removed.meta.changes) {
+    const session = await findSession(db, order.session_id);
+    if (session?.status === 'open') return fail(c, 404, 'That drink was already removed.');
+    return session ? fail(c, 409, 'This session is closed.') : fail(c, 404, 'That session no longer exists.');
+  }
   return c.json({ ok: true });
 });
 
