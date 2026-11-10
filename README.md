@@ -68,7 +68,13 @@ The admin account is created once. Changing the secrets later does not change it
 npm test
 ```
 
-This covers the menu naming and validation rules, the login and sign-up limits, order saves that race with a close, a delete or someone else's edit, and the account deletion and cleanup rules. Those server tests run the Worker against Node's built-in SQLite (`node:sqlite`, Node 22.13 or later) in place of D1.
+This covers the menu naming and validation rules, the login and sign-up limits, order saves that race with a close, a delete or someone else's edit, and the account deletion and cleanup rules. Those server tests run the Worker against Node's built-in SQLite (`node:sqlite`, Node 22.13 or later) in place of D1. `test/api.test.js` goes through every API route: who may call it, what it changes and how it refuses; `test/support/worker.js` holds its D1 stand-in and request helpers.
+
+To see which lines of `src/` the tests reach:
+
+```bash
+npm run test:coverage
+```
 
 ## Layout
 
