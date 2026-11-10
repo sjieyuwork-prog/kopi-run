@@ -13,7 +13,9 @@ npm run dev
 
 Open http://localhost:8787. The first run asks to apply the database migration; answer yes.
 
-For phones on the same Wi-Fi, open `http://<your-computer's-IP>:8787` (`ipconfig` shows the IP). Allow Node.js through Windows Firewall if it asks.
+`npm run dev` only listens on this computer. To test from phones on the same Wi-Fi, run `npm run dev:lan` instead and open `https://<your-computer's-IP>:8787` (`ipconfig` shows the IP). It uses a self-signed certificate, so each device shows a warning the first time; accept it to continue. Allow Node.js through Windows Firewall if it asks.
+
+Do not expose the app on the network over plain HTTP (for example `wrangler dev --ip 0.0.0.0` without `--local-protocol https`): anyone on the same Wi-Fi can read passwords as they are typed and steal the login cookie.
 
 The admin account is created on first run from `ADMIN_USERNAME` and `ADMIN_PASSWORD` in `.dev.vars` (see `.dev.vars.example`). Log in as the admin and open the **Admin** tab to find the verification code that other people need to sign up.
 
@@ -21,7 +23,8 @@ To start over with an empty database, stop the app and delete `.wrangler/state`.
 
 ## The rules
 
-- **Accounts:** username and password, at most 50. Signing up needs the verification code, which only the admin can see, change or regenerate. The admin can also reset passwords and delete accounts.
+- **Accounts:** username and password (at least 10 characters), at most 50. Signing up needs the verification code, which only the admin can see, change or regenerate; a custom code needs at least 8 characters. The admin can also reset passwords and delete accounts.
+- **Guessing limits:** in any 15 minutes, an account allows 10 failed logins, one IP address allows 20 failed logins and 10 sign-up attempts. After that the app answers "Too many attempts" until the 15 minutes are up. A successful login resets that account's count.
 - **Sessions:** anyone can start one and becomes its purchaser. Only one session is open at a time. The purchaser (or the admin) closes, reopens or deletes it. The last 5 closed sessions are kept; older ones are deleted.
 - **Drinks:** one per person per session, with an optional note. You can change or remove your own while the session is open. The purchaser can add, change or remove a drink for anyone. The form is pre-filled with your previous drink.
 - **Updates:** every open page checks for changes every 5 seconds.
@@ -63,7 +66,7 @@ The admin account is created once. Changing the secrets later does not change it
 npm test
 ```
 
-This covers the menu naming and validation rules, and order saves that race with a close, a delete or someone else's edit. The order tests run the Worker against Node's built-in SQLite (`node:sqlite`, Node 22.13 or later) in place of D1.
+This covers the menu naming and validation rules, the login and sign-up limits, and order saves that race with a close, a delete or someone else's edit. The login and order tests run the Worker against Node's built-in SQLite (`node:sqlite`, Node 22.13 or later) in place of D1.
 
 ## Layout
 
