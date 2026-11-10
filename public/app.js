@@ -1,3 +1,4 @@
+import { LIMITS, STATUS } from './limits.js';
 import { DRINKS, GROUPS, GROUP_ORDER, drinkName, validateDrink, withBase } from './menu.js';
 
 const POLL_MS = 5000;
@@ -15,11 +16,14 @@ const state = {
   authMode: 'login', // login | signup
   detail: null, // a closed session opened from History
   users: [], // admin page
-  maxUsers: 50,
+  maxUsers: LIMITS.maxUsers,
   invite: '',
 };
 
 let draft = null; // the order being edited in the drink picker
+
+// Bumped on every login and logout, so a response to a request sent before then is dropped.
+let authEpoch = 0;
 
 // ---------- helpers ----------
 
@@ -47,11 +51,16 @@ async function api(method, path, body) {
   const data = await res.json().catch(() => ({}));
   if (res.status === 401 && state.me) {
     // Logged out elsewhere, or the account was removed.
+    authEpoch++;
     state.me = null;
     $dialog.close();
     render();
   }
-  if (!res.ok) throw new Error(data.error || 'Something went wrong. Try again.');
+  if (!res.ok) {
+    const err = new Error(data.error || 'Something went wrong. Try again.');
+    err.status = res.status;
+    throw err;
+  }
   return data;
 }
 
@@ -111,7 +120,10 @@ function peopleText(s) {
 // ---------- data ----------
 
 // Pulls the latest sessions and orders. A poll only redraws when something changed.
+// Responses can arrive out of order, so one older than what is drawn, or sent before a login
+// or logout, is ignored rather than undoing newer state.
 async function sync({ poll = false } = {}) {
+  const epoch = authEpoch;
   let data;
   try {
     data = await api('GET', `/state?v=${poll ? state.version : 0}`);
@@ -119,7 +131,7 @@ async function sync({ poll = false } = {}) {
     if (poll) return;
     throw err;
   }
-  if (data.unchanged) return;
+  if (epoch !== authEpoch || data.unchanged || data.version < state.version) return;
   Object.assign(state, { version: data.version, me: data.me, session: data.session, history: data.history });
 
   if (state.detail && !state.history.some((h) => h.id === state.detail.id)) {
@@ -147,8 +159,15 @@ async function loadAdmin() {
   render();
 }
 
-async function saveOrder(userId, drink, note) {
-  await api('PUT', `/sessions/${state.session.id}/orders/${userId}`, { drink, note });
+// `updatedAt` is that of the drink being changed, or null when adding one. If someone else
+// saved in the meantime the server refuses, and the list is reloaded so the user can see why.
+async function saveOrder(sessionId, userId, drink, note, updatedAt) {
+  try {
+    await api('PUT', `/sessions/${sessionId}/orders/${userId}`, { drink, note, updatedAt });
+  } catch (err) {
+    if (err.status === 409 || err.status === 404) await sync().catch(() => {});
+    throw err;
+  }
   await sync();
 }
 
@@ -177,10 +196,10 @@ function authView() {
       </nav>
       <form data-form="${signup ? 'signup' : 'login'}" class="stack">
         <label>Username
-          <input name="username" autocomplete="username" autocapitalize="none" spellcheck="false" maxlength="20" required>
+          <input name="username" autocomplete="username" autocapitalize="none" spellcheck="false" maxlength="${LIMITS.usernameMax}" required>
         </label>
         <label>Password
-          <input name="password" type="password" autocomplete="${signup ? 'new-password' : 'current-password'}" ${signup ? 'minlength="6"' : ''} required>
+          <input name="password" type="password" autocomplete="${signup ? 'new-password' : 'current-password'}" ${signup ? `minlength="${LIMITS.passwordMin}"` : ''} required>
         </label>
         ${
           signup
@@ -227,7 +246,7 @@ function orderView() {
         <p class="muted">Start one when you are heading to the kopitiam. Whoever starts it is the purchaser.</p>
         <form data-form="start" class="stack">
           <label><span>Session name <span class="muted">(optional)</span></span>
-            <input name="title" maxlength="60" placeholder="e.g. Tuesday tea break">
+            <input name="title" maxlength="${LIMITS.title}" placeholder="e.g. Tuesday tea break">
           </label>
           <p class="error" role="alert" hidden></p>
           <button class="primary">Start a session</button>
@@ -238,7 +257,7 @@ function orderView() {
 }
 
 function sessionHead(s) {
-  const open = s.status === 'open';
+  const open = s.status === STATUS.open;
   return `
     <section class="card">
       <div class="row">
@@ -308,7 +327,7 @@ function summaryCard(s) {
 
 function peopleCard(s) {
   if (!s.orders.length) return '';
-  const canEdit = s.status === 'open' && s.purchaserId === state.me.id;
+  const canEdit = s.status === STATUS.open && s.purchaserId === state.me.id;
   const rows = s.orders.map((o) => {
     // The purchaser's own drink is managed from "Your drink" above.
     const tools =
@@ -339,7 +358,7 @@ function peopleCard(s) {
 }
 
 function manageCard(s) {
-  const open = s.status === 'open';
+  const open = s.status === STATUS.open;
   const isPurchaser = s.purchaserId === state.me.id;
   if (!isPurchaser && !state.me.isAdmin) return '';
   const buttons = [];
@@ -374,7 +393,7 @@ function historyView() {
   return `
     <section class="card">
       <h2>History</h2>
-      <p class="muted">The last 5 closed sessions are kept, for up to 30 days.</p>
+      <p class="muted">The last ${LIMITS.historySize} closed sessions are kept, for up to 30 days.</p>
       ${rows.length ? `<ul class="list">${rows.join('')}</ul>` : ''}
     </section>`;
 }
@@ -393,7 +412,7 @@ function accountView() {
           <input name="currentPassword" type="password" autocomplete="current-password" required>
         </label>
         <label>New password
-          <input name="newPassword" type="password" autocomplete="new-password" minlength="6" required>
+          <input name="newPassword" type="password" autocomplete="new-password" minlength="${LIMITS.passwordMin}" required>
         </label>
         <p class="error" role="alert" hidden></p>
         <button class="primary">Change password</button>
@@ -451,7 +470,7 @@ function adminView() {
       </div>
       <form data-form="code" class="stack">
         <label>Or set your own
-          <input name="code" minlength="4" maxlength="32" autocomplete="off" spellcheck="false" required>
+          <input name="code" minlength="${LIMITS.inviteMin}" maxlength="${LIMITS.inviteMax}" autocomplete="off" spellcheck="false" required>
         </label>
         <p class="error" role="alert" hidden></p>
         <button>Save code</button>
@@ -474,7 +493,8 @@ const chip = (name, value, label, hint, checked) => `
 // Opens the picker for one person, or (userId null) lets the purchaser pick who it is for.
 async function openDrinkDialog(userId) {
   const s = state.session;
-  draft = { userId, userName: '', candidates: null, drink: null, note: '' };
+  // Remember which session and which version of the drink this was opened for.
+  draft = { sessionId: s.id, userId, userName: '', candidates: null, drink: null, note: '', updatedAt: null };
   let saved;
   if (userId === null) {
     const { users } = await api('GET', '/users');
@@ -482,10 +502,11 @@ async function openDrinkDialog(userId) {
     draft.candidates = users.filter((u) => !ordered.has(u.id));
     if (!draft.candidates.length) return toast('Everyone already has a drink in this session.');
     draft.userId = draft.candidates[0].id;
-    saved = draft.candidates[0].lastOrder;
+    // Other people's saved orders stay private, so the picker starts from a plain drink.
   } else {
     const existing = s.orders.find((o) => o.userId === userId);
     draft.userName = existing?.userName ?? state.me.username;
+    draft.updatedAt = existing?.updatedAt ?? null;
     saved = existing ?? (userId === state.me.id ? state.me.lastOrder : null);
   }
   fillDraft(saved);
@@ -519,7 +540,7 @@ function renderDialog() {
       </fieldset>
       <div id="drink-options" class="stack"></div>
       <label><span>Note <span class="muted">(optional)</span></span>
-        <input name="note" maxlength="80" placeholder="e.g. extra hot" value="${esc(draft.note)}">
+        <input name="note" maxlength="${LIMITS.note}" placeholder="e.g. extra hot" value="${esc(draft.note)}">
       </label>
       <p class="preview">
         <span class="muted">This will be ordered as</span>
@@ -563,7 +584,6 @@ $dialog.addEventListener('change', (e) => {
   if (name === 'user') {
     const person = draft.candidates.find((u) => u.id === Number(value));
     draft.userId = person.id;
-    fillDraft(person.lastOrder);
     renderDialog();
     $dialog.querySelector('select').focus();
   } else if (name === 'base') {
@@ -585,9 +605,14 @@ $dialog.addEventListener('submit', async (e) => {
   const save = form.querySelector('button.primary');
   save.disabled = true;
   try {
-    await saveOrder(draft.userId, draft.drink, form.elements.note.value);
+    await saveOrder(draft.sessionId, draft.userId, draft.drink, form.elements.note.value, draft.updatedAt);
     $dialog.close();
   } catch (err) {
+    if (err.status === 409 || err.status === 404) {
+      // The form no longer matches the list; close it so the user sees the current drinks.
+      $dialog.close();
+      return toast(err.message);
+    }
     showError(form, err.message);
   } finally {
     save.disabled = false;
@@ -597,6 +622,7 @@ $dialog.addEventListener('submit', async (e) => {
 // ---------- actions ----------
 
 function signedOut() {
+  authEpoch++;
   Object.assign(state, { me: null, version: 0, session: null, history: [], view: 'order', detail: null });
   render();
 }
@@ -613,6 +639,7 @@ const actions = {
     render();
   },
   async logout() {
+    authEpoch++;
     await api('POST', '/logout');
     signedOut();
   },
@@ -625,11 +652,17 @@ const actions = {
 
   'edit-order': (el) => openDrinkDialog(Number(el.dataset.user)),
   'order-for': () => openDrinkDialog(null),
-  'repeat-order': () => saveOrder(state.me.id, state.me.lastOrder.drink, state.me.lastOrder.note),
+  // Only offered when the user has no drink yet, so it adds rather than replaces.
+  'repeat-order': () =>
+    saveOrder(state.session.id, state.me.id, state.me.lastOrder.drink, state.me.lastOrder.note, null),
   async 'remove-order'(el) {
     if (!confirm('Remove this drink?')) return;
-    await api('DELETE', `/orders/${el.dataset.order}`);
-    await sync();
+    try {
+      await api('DELETE', `/orders/${el.dataset.order}`);
+    } finally {
+      // Reload even on failure: the drink may already be gone or the session closed.
+      await sync().catch(() => {});
+    }
   },
 
   async 'close-session'() {
@@ -664,7 +697,7 @@ const actions = {
     render();
   },
   async 'reset-password'(el) {
-    const password = prompt(`New password for ${el.dataset.name} (at least 6 characters):`);
+    const password = prompt(`New password for ${el.dataset.name} (at least ${LIMITS.passwordMin} characters):`);
     if (!password) return;
     await api('POST', `/admin/users/${el.dataset.user}/password`, { password });
     toast(`Password reset. Tell ${el.dataset.name} the new one.`);
@@ -679,10 +712,12 @@ const actions = {
 const forms = {
   async login(data) {
     await api('POST', '/login', data);
+    authEpoch++;
     await sync();
   },
   async signup(data) {
     await api('POST', '/signup', data);
+    authEpoch++;
     await sync();
   },
   async start(data) {

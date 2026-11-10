@@ -1,6 +1,6 @@
 // Runs the Worker against a real SQLite database (Node's built-in node:sqlite) wrapped to look like D1.
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
+import { readdirSync, readFileSync } from 'node:fs';
 import { DatabaseSync } from 'node:sqlite';
 import { before, test } from 'node:test';
 import { DELETED_NAME, HISTORY_DAYS, STALE_OPEN_HOURS } from '../src/cleanup.js';
@@ -42,7 +42,9 @@ function d1(sqlite) {
 
 const sqlite = new DatabaseSync(':memory:');
 sqlite.exec('PRAGMA foreign_keys = ON'); // D1 enforces foreign keys
-sqlite.exec(readFileSync(new URL('../migrations/0001_init.sql', import.meta.url), 'utf8'));
+for (const file of readdirSync(new URL('../migrations/', import.meta.url)).sort()) {
+  sqlite.exec(readFileSync(new URL(`../migrations/${file}`, import.meta.url), 'utf8'));
+}
 const env = { DB: d1(sqlite), ADMIN_USERNAME: 'boss', ADMIN_PASSWORD: 'boss-password' };
 const rows = (sql, ...args) => sqlite.prepare(sql).all(...args);
 const one = (sql, ...args) => sqlite.prepare(sql).get(...args);
@@ -64,7 +66,7 @@ let admin;
 
 async function signup(username) {
   const { data } = await call(admin, 'GET', '/admin/invite');
-  const res = await call(null, 'POST', '/signup', { username, password: 'secret-pw', code: data.code });
+  const res = await call(null, 'POST', '/signup', { username, password: 'secret-password', code: data.code });
   assert.equal(res.status, 201);
   return { cookie: res.cookie, id: one('SELECT id FROM users WHERE username = ?', username).id };
 }
@@ -94,7 +96,7 @@ test('deleting your own account removes your drinks, logins and name everywhere'
   assert.equal((await call(ali.cookie, 'DELETE', '/me', { password: 'wrong' })).status, 403);
   assert.ok(one('SELECT 1 AS x FROM users WHERE id = ?', ali.id), 'a wrong password deletes nothing');
 
-  const res = await call(ali.cookie, 'DELETE', '/me', { password: 'secret-pw' });
+  const res = await call(ali.cookie, 'DELETE', '/me', { password: 'secret-password' });
   assert.equal(res.status, 200);
   assert.equal(one('SELECT 1 AS x FROM users WHERE id = ?', ali.id), undefined);
   assert.deepEqual(rows("SELECT id FROM orders WHERE user_id = ? OR user_name = 'ali'", ali.id), []);
