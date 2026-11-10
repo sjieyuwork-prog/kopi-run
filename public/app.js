@@ -374,7 +374,7 @@ function historyView() {
   return `
     <section class="card">
       <h2>History</h2>
-      <p class="muted">The last 5 closed sessions are kept.</p>
+      <p class="muted">The last 5 closed sessions are kept, for up to 30 days.</p>
       ${rows.length ? `<ul class="list">${rows.join('')}</ul>` : ''}
     </section>`;
 }
@@ -398,7 +398,31 @@ function accountView() {
         <p class="error" role="alert" hidden></p>
         <button class="primary">Change password</button>
       </form>
-    </section>`;
+    </section>
+    <section class="card">
+      <h3>Saved drink</h3>
+      <p class="muted">${
+        state.me.lastOrder
+          ? `Your order form starts from <strong>${esc(drinkName(state.me.lastOrder.drink))}</strong>, your last drink.`
+          : 'No drink is saved. Your next order will be remembered to pre-fill the form.'
+      }</p>
+      ${state.me.lastOrder ? '<div class="actions"><button data-action="clear-saved-drink">Clear my saved drink</button></div>' : ''}
+    </section>
+    ${
+      state.me.isAdmin
+        ? ''
+        : `<section class="card">
+      <h3>Delete my account</h3>
+      <p class="muted">Removes your account, your saved drink and your drinks in every session, including past ones. This cannot be undone.</p>
+      <form data-form="delete-account" class="stack">
+        <label>Password
+          <input name="password" type="password" autocomplete="current-password" required>
+        </label>
+        <p class="error" role="alert" hidden></p>
+        <button class="danger">Delete my account</button>
+      </form>
+    </section>`
+    }`;
 }
 
 function adminView() {
@@ -572,6 +596,11 @@ $dialog.addEventListener('submit', async (e) => {
 
 // ---------- actions ----------
 
+function signedOut() {
+  Object.assign(state, { me: null, version: 0, session: null, history: [], view: 'order', detail: null });
+  render();
+}
+
 const actions = {
   async go(el) {
     state.view = el.dataset.view;
@@ -585,8 +614,13 @@ const actions = {
   },
   async logout() {
     await api('POST', '/logout');
-    Object.assign(state, { me: null, version: 0, session: null, history: [], view: 'order', detail: null });
+    signedOut();
+  },
+  async 'clear-saved-drink'() {
+    await api('DELETE', '/me/last-drink');
+    state.me.lastOrder = null;
     render();
+    toast('Saved drink cleared.');
   },
 
   'edit-order': (el) => openDrinkDialog(Number(el.dataset.user)),
@@ -636,7 +670,7 @@ const actions = {
     toast(`Password reset. Tell ${el.dataset.name} the new one.`);
   },
   async 'delete-user'(el) {
-    if (!confirm(`Delete ${el.dataset.name}'s account? Their past drinks stay in the history.`)) return;
+    if (!confirm(`Delete ${el.dataset.name}'s account? Their drinks are removed from every session, including past ones.`)) return;
     await api('DELETE', `/admin/users/${el.dataset.user}`);
     await loadAdmin();
   },
@@ -660,6 +694,12 @@ const forms = {
     form.reset();
     form.querySelector('.error').hidden = true;
     toast('Password changed.');
+  },
+  async 'delete-account'(data) {
+    if (!confirm('Delete your account and all your drinks? This cannot be undone.')) return;
+    await api('DELETE', '/me', data);
+    signedOut();
+    toast('Your account was deleted.');
   },
   async code(data) {
     state.invite = (await api('PUT', '/admin/invite', data)).code;

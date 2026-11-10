@@ -1,10 +1,10 @@
 import { Hono } from 'hono';
 import { deleteCookie, getCookie, setCookie } from 'hono/cookie';
 import { drinkName, validateDrink } from '../public/menu.js';
+import { deleteAccount, HISTORY_SIZE, pruneHistory, purge } from './cleanup.js';
 import { hashPassword, randomCode, randomToken, sha256Hex, verifyPassword } from './crypto.js';
 
 const MAX_USERS = 50;
-const HISTORY_SIZE = 5; // closed sessions kept; older ones are deleted
 const LOGIN_SECONDS = 30 * 24 * 60 * 60;
 const COOKIE = 'kopi_sid';
 const USERNAME_RE = /^[A-Za-z0-9._-]{3,20}$/;
@@ -250,6 +250,27 @@ app.post('/api/me/password', requireUser, async (c) => {
   return c.json({ ok: true });
 });
 
+// Forgets the saved drink that pre-fills the order form.
+app.delete('/api/me/last-drink', requireUser, async (c) => {
+  await c.env.DB.prepare('UPDATE users SET last_drink = NULL WHERE id = ?').bind(c.get('user').id).run();
+  return c.json({ ok: true });
+});
+
+// Deletes your own account and everything stored under it. Asks for the password so an unattended phone is not enough.
+app.delete('/api/me', requireUser, async (c) => {
+  const db = c.env.DB;
+  const user = c.get('user');
+  if (user.isAdmin) return fail(c, 400, 'The admin account cannot be deleted.');
+  const body = await readJson(c);
+  const hash = await db.prepare('SELECT password_hash FROM users WHERE id = ?').bind(user.id).first('password_hash');
+  if (!(await verifyPassword(String(body.password ?? ''), hash))) {
+    return fail(c, 403, 'Your password is not right.');
+  }
+  await db.batch([...deleteAccount(db, user.id), bumpVersion(db)]);
+  deleteCookie(c, COOKIE, { path: '/' });
+  return c.json({ ok: true });
+});
+
 // ---------- sessions and orders ----------
 
 // Polled every few seconds. `v` is the version the client already has.
@@ -304,13 +325,7 @@ app.post('/api/sessions/:id/close', requireUser, async (c) => {
     db
       .prepare("UPDATE order_sessions SET status = 'closed', closed_at = ? WHERE id = ? AND status = 'open'")
       .bind(Date.now(), session.id),
-    db
-      .prepare(
-        `DELETE FROM order_sessions
-          WHERE status = 'closed'
-            AND id NOT IN (SELECT id FROM order_sessions WHERE status = 'closed' ORDER BY closed_at DESC, id DESC LIMIT ?)`
-      )
-      .bind(HISTORY_SIZE),
+    pruneHistory(db),
     bumpVersion(db),
   ]);
   return c.json({ ok: true });
@@ -442,17 +457,14 @@ app.delete('/api/admin/users/:id', requireUser, requireAdmin, async (c) => {
   const target = await db.prepare('SELECT is_admin FROM users WHERE id = ?').bind(id).first();
   if (!target) return fail(c, 404, 'That account no longer exists.');
   if (target.is_admin) return fail(c, 400, 'The admin account cannot be deleted.');
-  // Their drink leaves the open session; closed sessions keep it under their name.
-  await db.batch([
-    db
-      .prepare(
-        "DELETE FROM orders WHERE user_id = ? AND session_id IN (SELECT id FROM order_sessions WHERE status = 'open')"
-      )
-      .bind(id),
-    db.prepare('DELETE FROM users WHERE id = ?').bind(id),
-    bumpVersion(db),
-  ]);
+  await db.batch([...deleteAccount(db, id), bumpVersion(db)]);
   return c.json({ ok: true });
 });
 
-export default app;
+export default {
+  fetch: app.fetch,
+  // Daily Cron Trigger (see wrangler.jsonc), so old data goes even when nobody uses the app.
+  async scheduled(controller, env) {
+    await env.DB.batch([...purge(env.DB, controller.scheduledTime), bumpVersion(env.DB)]);
+  },
+};
