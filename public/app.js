@@ -2,10 +2,15 @@ import { LIMITS, STATUS } from './limits.js';
 import { DRINKS, GROUPS, GROUP_ORDER, drinkName, validateDrink, withBase } from './menu.js';
 
 const POLL_MS = 5000;
+const OFFLINE_AFTER = 3; // failed polls in a row before the offline banner shows
 
 const $app = document.getElementById('app');
 const $dialog = document.getElementById('drink-dialog');
 const $toast = document.getElementById('toast');
+const $alert = document.getElementById('alert');
+const $offline = document.getElementById('offline');
+
+let failedPolls = 0;
 
 const state = {
   me: null, // the logged-in user
@@ -72,9 +77,31 @@ function toast(message) {
   toastTimer = setTimeout(() => $toast.classList.remove('show'), 2500);
 }
 
+// Errors use an assertive alert that stays until dismissed, so they are not missed.
+function alertError(message) {
+  $alert.querySelector('span').textContent = message;
+  $alert.hidden = false;
+}
+$alert.querySelector('button').addEventListener('click', () => {
+  $alert.hidden = true;
+});
+
+const loadingCard = () => '<p class="loading muted">Loading…</p>';
+
+// Shows a loading line under the tabs while a page loads. On failure the previous page comes back.
+async function withLoading(task) {
+  $app.innerHTML = (state.me ? topBar() : '') + loadingCard();
+  try {
+    await task();
+  } catch (err) {
+    render();
+    throw err;
+  }
+}
+
 function showError(form, message) {
   const el = form.querySelector('.error');
-  if (!el) return toast(message);
+  if (!el) return alertError(message);
   el.textContent = message;
   el.hidden = false;
 }
@@ -128,9 +155,15 @@ async function sync({ poll = false } = {}) {
   try {
     data = await api('GET', `/state?v=${poll ? state.version : 0}`);
   } catch (err) {
-    if (poll) return;
-    throw err;
+    if (!poll) throw err;
+    // A 4xx (such as a 401 after being logged out) means the server answered.
+    const reachable = err.status && err.status < 500;
+    failedPolls = reachable ? 0 : failedPolls + 1;
+    $offline.hidden = failedPolls < OFFLINE_AFTER;
+    return;
   }
+  failedPolls = 0;
+  $offline.hidden = true;
   if (epoch !== authEpoch || data.unchanged || data.version < state.version) return;
   Object.assign(state, { version: data.version, me: data.me, session: data.session, history: data.history });
 
@@ -147,16 +180,20 @@ async function sync({ poll = false } = {}) {
   if (!poll || state.view === 'order' || state.view === 'history') render();
 }
 
-async function openSession(id) {
-  state.detail = (await api('GET', `/sessions/${id}`)).session;
-  state.view = 'history';
-  render();
+function openSession(id) {
+  return withLoading(async () => {
+    state.detail = (await api('GET', `/sessions/${id}`)).session;
+    state.view = 'history';
+    render();
+  });
 }
 
-async function loadAdmin() {
-  const [{ code }, { users, max }] = await Promise.all([api('GET', '/admin/invite'), api('GET', '/users')]);
-  Object.assign(state, { invite: code, users, maxUsers: max });
-  render();
+function loadAdmin() {
+  return withLoading(async () => {
+    const [{ code }, { users, max }] = await Promise.all([api('GET', '/admin/invite'), api('GET', '/users')]);
+    Object.assign(state, { invite: code, users, maxUsers: max });
+    render();
+  });
 }
 
 // `updatedAt` is that of the drink being changed, or null when adding one. If someone else
@@ -394,7 +431,7 @@ function historyView() {
     <section class="card">
       <h2>History</h2>
       <p class="muted">The last ${LIMITS.historySize} closed sessions are kept, for up to 30 days.</p>
-      ${rows.length ? `<ul class="list">${rows.join('')}</ul>` : ''}
+      ${rows.length ? `<ul class="list">${rows.join('')}</ul>` : '<p>No closed sessions yet.</p>'}
     </section>`;
 }
 
@@ -634,6 +671,7 @@ const actions = {
     if (state.view === 'admin') await loadAdmin();
     else render();
   },
+  retry: startup,
   'auth-mode'(el) {
     state.authMode = el.dataset.mode;
     render();
@@ -750,7 +788,7 @@ $app.addEventListener('click', async (e) => {
   try {
     await actions[el.dataset.action](el);
   } catch (err) {
-    toast(err.message);
+    alertError(err.message);
   } finally {
     el.disabled = false;
   }
@@ -778,5 +816,19 @@ const poll = () => {
 setInterval(poll, POLL_MS);
 document.addEventListener('visibilitychange', poll);
 
-// Not logged in yet: sync fails and the login form is drawn instead.
-sync().catch(render);
+// The first load. Only a 401 means "not logged in"; anything else (server not set up,
+// no connection) is shown with a Retry button instead of a login form that cannot work.
+function startup() {
+  $app.innerHTML = loadingCard();
+  sync().catch((err) => {
+    if (err.status === 401) return render();
+    $app.innerHTML = `
+      <section class="card">
+        <h2>Kopi Run could not load</h2>
+        <p class="error">${esc(err.message)}</p>
+        <div class="actions"><button class="primary" data-action="retry">Retry</button></div>
+      </section>`;
+  });
+}
+
+startup();
