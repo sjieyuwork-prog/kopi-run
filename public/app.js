@@ -4,6 +4,7 @@ const POLL_MS = 5000;
 
 const $app = document.getElementById('app');
 const $dialog = document.getElementById('drink-dialog');
+const $reset = document.getElementById('reset-dialog');
 const $toast = document.getElementById('toast');
 
 const state = {
@@ -132,7 +133,7 @@ async function sync({ poll = false } = {}) {
     toast('The session was closed.');
   }
   // Don't wipe a half-typed form on the other pages just because someone ordered.
-  if (!poll || state.view === 'order' || state.view === 'history') render();
+  if (!poll || state.view === 'order' || state.view === 'history') render({ keepInputs: poll });
 }
 
 async function openSession(id) {
@@ -154,13 +155,77 @@ async function saveOrder(userId, drink, note) {
 
 // ---------- views ----------
 
-function render() {
+// ---------- focus keeping ----------
+// render() replaces #app wholesale, so the focused element is remembered by a
+// selector built from its data attributes and focused again in the new markup.
+
+const KEY_ATTRS = ['action', 'view', 'mode', 'id', 'user', 'order'];
+
+function focusSelector(el) {
+  if (!el || el === document.body || !$app.contains(el)) return null;
+  if (el.dataset.action) {
+    return KEY_ATTRS.filter((a) => el.dataset[a] !== undefined)
+      .map((a) => `[data-${a}="${CSS.escape(el.dataset[a])}"]`)
+      .join('');
+  }
+  const form = el.closest('[data-form]');
+  if (!form) return null;
+  const scope = `[data-form="${CSS.escape(form.dataset.form)}"]`;
+  if (el.name) return `${scope} [name="${CSS.escape(el.name)}"]`;
+  if (el.matches('button:not([type="button"])')) return `${scope} button:not([type="button"])`;
+  return null;
+}
+
+// The last element focused in #app. Kept when focus drops to <body> because the
+// focused button was disabled while its action runs; cleared when the user moves on.
+let lastFocus = null;
+$app.addEventListener('focusin', (e) => {
+  lastFocus = focusSelector(e.target);
+});
+$app.addEventListener('focusout', (e) => {
+  if (!e.relatedTarget && !e.target.disabled) lastFocus = null;
+});
+
+function currentFocus() {
+  const active = document.activeElement;
+  if ($app.contains(active)) return focusSelector(active);
+  if (!active || active === document.body) return lastFocus;
+  return null; // focus is in a dialog or elsewhere: leave it alone
+}
+
+function restoreFocus(selector) {
+  if (!selector) return;
+  const el = $app.querySelector(selector);
+  if (el && !el.disabled) el.focus({ preventScroll: true });
+}
+
+function render({ keepInputs = false } = {}) {
+  const focus = currentFocus();
+  const caret = $app.contains(document.activeElement) ? document.activeElement.selectionStart : null;
+  // A background redraw should not wipe what someone is typing.
+  const typed = keepInputs
+    ? [...$app.querySelectorAll('[data-form] [name]')].map((el) => [focusSelector(el), el.value])
+    : [];
+
   if (!state.me) {
     $app.innerHTML = authView();
-    return;
+  } else {
+    const views = { order: orderView, history: historyView, account: accountView, admin: adminView };
+    $app.innerHTML = topBar() + views[state.view]();
   }
-  const views = { order: orderView, history: historyView, account: accountView, admin: adminView };
-  $app.innerHTML = topBar() + views[state.view]();
+
+  for (const [selector, value] of typed) {
+    const el = selector && $app.querySelector(selector);
+    if (el) el.value = value;
+  }
+  restoreFocus(focus);
+  if (caret != null && document.activeElement.setSelectionRange) {
+    try {
+      document.activeElement.setSelectionRange(caret, caret);
+    } catch {
+      // Some input types (e.g. email) do not support a caret position.
+    }
+  }
 }
 
 function authView() {
@@ -171,10 +236,10 @@ function authView() {
         <h1>Kopi Run</h1>
         <p class="muted">One list for everyone's kopitiam order.</p>
       </div>
-      <nav class="tabs">
-        <button data-action="auth-mode" data-mode="login" class="${signup ? '' : 'active'}">Log in</button>
-        <button data-action="auth-mode" data-mode="signup" class="${signup ? 'active' : ''}">Sign up</button>
-      </nav>
+      <div class="tabs" role="group" aria-label="Log in or sign up">
+        <button data-action="auth-mode" data-mode="login" class="${signup ? '' : 'active'}" aria-pressed="${!signup}">Log in</button>
+        <button data-action="auth-mode" data-mode="signup" class="${signup ? 'active' : ''}" aria-pressed="${signup}">Sign up</button>
+      </div>
       <form data-form="${signup ? 'signup' : 'login'}" class="stack">
         <label>Username
           <input name="username" autocomplete="username" autocapitalize="none" spellcheck="false" maxlength="20" required>
@@ -205,15 +270,15 @@ function topBar() {
   if (state.me.isAdmin) tabs.push(['admin', 'Admin']);
   return `
     <header class="top">
-      <span class="brand">Kopi Run</span>
+      <h1 class="brand">Kopi Run</h1>
       <span class="muted">${esc(state.me.username)}</span>
     </header>
-    <nav class="tabs">
+    <nav class="tabs" aria-label="Pages">
       ${tabs
-        .map(
-          ([view, label]) =>
-            `<button data-action="go" data-view="${view}" class="${state.view === view ? 'active' : ''}">${label}</button>`
-        )
+        .map(([view, label]) => {
+          const current = state.view === view;
+          return `<button data-action="go" data-view="${view}" class="${current ? 'active' : ''}" ${current ? 'aria-current="page"' : ''}>${label}</button>`;
+        })
         .join('')}
     </nav>`;
 }
@@ -485,7 +550,7 @@ function renderDialog() {
   $dialog.innerHTML = `
     <form class="stack">
       <div class="row">
-        <h2>${title}</h2>
+        <h2 id="drink-dialog-title">${title}</h2>
         <button type="button" class="icon" data-close aria-label="Close">✕</button>
       </div>
       ${draft.candidates ? `<label>Who is it for?<select name="user">${people.join('')}</select></label>` : ''}
@@ -570,6 +635,61 @@ $dialog.addEventListener('submit', async (e) => {
   }
 });
 
+// ---------- admin password reset ----------
+
+function openResetDialog(userId, name) {
+  $reset.innerHTML = `
+    <form class="stack" data-user="${userId}" data-name="${esc(name)}">
+      <div class="row">
+        <h2 id="reset-dialog-title">Reset password for ${esc(name)}</h2>
+        <button type="button" class="icon" data-close aria-label="Close">✕</button>
+      </div>
+      <label>New password
+        <input name="password" type="password" autocomplete="new-password" minlength="6" required>
+      </label>
+      <label>Repeat new password
+        <input name="confirm" type="password" autocomplete="new-password" minlength="6" required>
+      </label>
+      <p class="error" role="alert" hidden></p>
+      <div class="actions end">
+        <button type="button" data-close>Cancel</button>
+        <button class="primary">Reset password</button>
+      </div>
+    </form>`;
+  $reset.showModal();
+}
+
+$reset.addEventListener('click', (e) => {
+  if (e.target.closest('[data-close]')) $reset.close();
+});
+
+$reset.addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const form = e.target;
+  const { password, confirm: repeat } = form.elements;
+  if (password.value.length < 6) return showError(form, 'Use at least 6 characters.');
+  if (password.value !== repeat.value) return showError(form, 'The two passwords do not match.');
+  const save = form.querySelector('button.primary');
+  save.disabled = true;
+  try {
+    await api('POST', `/admin/users/${form.dataset.user}/password`, { password: password.value });
+    $reset.close();
+    toast(`Password reset. Tell ${form.dataset.name} the new one.`);
+  } catch (err) {
+    showError(form, err.message);
+  } finally {
+    save.disabled = false;
+  }
+});
+
+// A dialog returns focus to the button that opened it, but a redraw while it
+// was open may have replaced that button; focus its replacement instead.
+for (const dialog of [$dialog, $reset]) {
+  dialog.addEventListener('close', () => {
+    if (document.activeElement === document.body || !document.activeElement) restoreFocus(lastFocus);
+  });
+}
+
 // ---------- actions ----------
 
 const actions = {
@@ -629,12 +749,7 @@ const actions = {
     state.invite = (await api('PUT', '/admin/invite', {})).code;
     render();
   },
-  async 'reset-password'(el) {
-    const password = prompt(`New password for ${el.dataset.name} (at least 6 characters):`);
-    if (!password) return;
-    await api('POST', `/admin/users/${el.dataset.user}/password`, { password });
-    toast(`Password reset. Tell ${el.dataset.name} the new one.`);
-  },
+  'reset-password': (el) => openResetDialog(Number(el.dataset.user), el.dataset.name),
   async 'delete-user'(el) {
     if (!confirm(`Delete ${el.dataset.name}'s account? Their past drinks stay in the history.`)) return;
     await api('DELETE', `/admin/users/${el.dataset.user}`);
