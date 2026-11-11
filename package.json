@@ -10,6 +10,7 @@
     "migrate:remote": "wrangler d1 migrations apply kopi-run --remote",
     "deploy": "npm run migrate:remote && wrangler deploy",
     "test": "node --test",
+    "test:coverage": "node --test --experimental-test-coverage --test-coverage-include=src/**",
     "lint": "eslint . && prettier --check .",
     "format": "prettier --write ."
   },
