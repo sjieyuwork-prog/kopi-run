@@ -283,16 +283,28 @@ app.post('/api/logout', async (c) => {
   return c.json({ ok: true });
 });
 
+// Checks the logged-in person's own password. Wrong guesses count toward the same per-account limit as
+// failed logins, so a stolen login cookie cannot be used to guess the password without limit.
+// Returns null when the password is right, otherwise the refusal to send.
+async function checkOwnPassword(c, password, wrongMessage) {
+  const db = c.env.DB;
+  const user = c.get('user');
+  const key = user.username.toLowerCase();
+  if (await isLimited(db, 'login-user', key)) return tooMany(c);
+  const hash = await db.prepare('SELECT password_hash FROM users WHERE id = ?').bind(user.id).first('password_hash');
+  if (await verifyPassword(String(password ?? ''), hash)) return null;
+  await recordAttempt(db, 'login-user', key).run();
+  return fail(c, 403, wrongMessage);
+}
+
 app.post('/api/me/password', requireUser, async (c) => {
   const db = c.env.DB;
   const user = c.get('user');
   const body = await readJson(c);
   const problem = passwordProblem(body.newPassword);
   if (problem) return fail(c, 400, problem);
-  const hash = await db.prepare('SELECT password_hash FROM users WHERE id = ?').bind(user.id).first('password_hash');
-  if (!(await verifyPassword(String(body.currentPassword ?? ''), hash))) {
-    return fail(c, 403, 'Your current password is not right.');
-  }
+  const refused = await checkOwnPassword(c, body.currentPassword, 'Your current password is not right.');
+  if (refused) return refused;
   // Log out every other device, but keep this one.
   await db.batch([
     db.prepare('UPDATE users SET password_hash = ? WHERE id = ?').bind(await hashPassword(body.newPassword), user.id),
@@ -315,10 +327,8 @@ app.delete('/api/me', requireUser, async (c) => {
   const user = c.get('user');
   if (user.isAdmin) return fail(c, 400, 'The admin account cannot be deleted.');
   const body = await readJson(c);
-  const hash = await db.prepare('SELECT password_hash FROM users WHERE id = ?').bind(user.id).first('password_hash');
-  if (!(await verifyPassword(String(body.password ?? ''), hash))) {
-    return fail(c, 403, 'Your password is not right.');
-  }
+  const refused = await checkOwnPassword(c, body.password, 'Your password is not right.');
+  if (refused) return refused;
   await db.batch([...deleteAccount(db, user.id), bumpVersion(db)]);
   deleteCookie(c, COOKIE, { path: '/' });
   return c.json({ ok: true });
